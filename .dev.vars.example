@@ -1,0 +1,6 @@
+# Read key for the API and the inbox login. At least 32 characters, or the Worker refuses it:
+#   openssl rand -hex 32
+API_KEY=change-me
+# Secret path prefix: every route is served under /<BASE_PATH>/, the rest is a bare 404.
+# 16-128 letters, digits, - or _:  openssl rand -hex 16
+BASE_PATH=change-me-to-something-random

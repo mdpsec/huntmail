@@ -1,0 +1,29 @@
+{
+  "name": "huntmail",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Catch-all inbox for bug bounty hunters on Cloudflare Email Routing, Workers and D1. Free plan friendly.",
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "redeploy": "wrangler d1 migrations apply DB --remote --config wrangler.local.jsonc && wrangler deploy --config wrangler.local.jsonc",
+    "bundle": "node scripts/bundle.mjs",
+    "test": "vitest run && npm run -s perf",
+    "typecheck": "tsc --noEmit",
+    "bench": "esbuild scripts/bench.ts --bundle --platform=node --format=esm --outfile=.wrangler/bench.mjs --log-level=warning && node .wrangler/bench.mjs",
+    "types": "wrangler types --strict-vars=false",
+    "perf": "esbuild scripts/perf-check.ts --bundle --platform=node --format=esm --outfile=.wrangler/perf.mjs --log-level=warning && node .wrangler/perf.mjs"
+  },
+  "dependencies": {
+    "postal-mime": "^4.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.8.4",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.150.0"
+  }
+}

@@ -1,0 +1,46 @@
+// Public template. Copy values for your own deployment; see docs/SETUP.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "huntmail",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  // Smaller bundle, less compile time on cold starts, which count toward CPU.
+  "minify": true,
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "huntmail",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Your mail domains, comma-separated. Setup adds each --domain here. Only used by the stats
+    // page, to list set-up domains that have not received mail yet.
+    "DOMAINS": "",
+    // Days of mail to keep. The hourly retention run deletes older mail.
+    "RETENTION_DAYS": "30",
+    // Stored-bytes cap, enforced on every arrival. Above it, unread mail is evicted first, then the
+    // oldest read mail. Free D1 databases hold 500 MB; leave room for indexes.
+    "MAX_STORE_MB": "350",
+    // Larger messages are stored truncated (headers and the start of the body).
+    "MAX_MESSAGE_KB": "4096",
+    // Optional comma-separated verified addresses to also forward every message to.
+    "FORWARD_TO": "",
+    // Lifetime of signed view links, in seconds.
+    "VIEW_LINK_TTL": "900",
+    // CPU tuning for the free plan's 10 ms limit. Leading bytes of each message parsed for
+    // text, codes and links. Raw is always stored in full.
+    "PARSE_BYTES": "262144",
+    // Messages larger than this are stored uncompressed, since gzip of big bodies costs CPU.
+    "GZIP_MAX_BYTES": "131072",
+    // Unparsed messages one per-address read (to=) parses before answering. 1 keeps reads inside
+    // the free plan's 10 ms; on Paid use 25 so a mailbox listing never shows an empty body.
+    "TO_READ_PARSE_MAX": "1"
+  }
+  // Secret, set with `wrangler secret put API_KEY`: the read key for the API and inbox login.
+}
