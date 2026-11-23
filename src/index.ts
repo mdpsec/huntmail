@@ -8,8 +8,10 @@ import {
   loadRaw,
   loadRawMany,
   markRead,
+  DAILY_STATS_KEEP_DAYS,
   dailyCounts,
   domainCounts,
+  domainDays,
   nextCursor,
   overview,
   recentTop,
@@ -74,6 +76,7 @@ function redirect(location: string, headers: Record<string, string> = {}): Respo
 
 /** ASCII only, so the index range in whereClause is exact; long enough to stay selective. */
 const TO_PREFIX_RE = /^[a-z0-9._+@-]{3,254}$/;
+const TO_DOMAIN_RE = /^[a-z0-9.-]{1,253}$/;
 
 function listQuery(p: URLSearchParams, defaults: { limit: number; order: "asc" | "desc" }): ListQuery | string {
   const since = p.get("since");
@@ -90,9 +93,12 @@ function listQuery(p: URLSearchParams, defaults: { limit: number; order: "asc" |
   const toPrefix = p.get("to_prefix")?.trim().toLowerCase() || undefined;
   if (toPrefix && !TO_PREFIX_RE.test(toPrefix)) return "to_prefix wants 3-254 characters: letters, digits and . _ + - @";
   if (to && toPrefix) return "use to or to_prefix, not both";
+  const toDomain = p.get("to_domain")?.trim().toLowerCase() || undefined;
+  if (toDomain && !TO_DOMAIN_RE.test(toDomain)) return "to_domain wants a domain name";
   return {
     to,
     toPrefix,
+    toDomain,
     subject: p.get("subject") || undefined,
     q: p.get("q") || undefined,
     fromDomain: p.get("from_domain")?.trim() || undefined,
@@ -236,7 +242,7 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
   if (parts.length === 2 && parts[1] === "wait" && req.method === "GET") {
     const q = listQuery(p, { limit: 1, order: "desc" });
     if (typeof q === "string") return errorJson(400, q);
-    if (!q.to && !q.toPrefix && !q.subject && !q.q) return errorJson(400, "wait needs to, to_prefix, subject or q");
+    if (!q.to && !q.toPrefix && !q.toDomain && !q.subject && !q.q) return errorJson(400, "wait needs to, to_prefix, to_domain, subject or q");
     q.since ??= Date.now();
     const found = await waitFor(env, q, intVar(p.get("timeout") ?? undefined, 30, 1, WAIT_MAX_SECONDS), req.signal);
     if (!found) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
@@ -248,18 +254,30 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
 
   // /api/stats: running counters only, so polling it stays cheap.
   if (parts.length === 2 && parts[1] === "stats" && req.method === "GET") {
-    const [o, [today], domains] = await Promise.all([overview(env.DB), dailyCounts(env.DB, 1), domainCounts(env.DB, 30)]);
+    // ?days=N adds the daily series (daily_stats keeps DAILY_STATS_KEEP_DAYS of them).
+    const daysParam = p.get("days");
+    const days = daysParam === null ? 0 : /^\d{1,3}$/.test(daysParam) ? Number(daysParam) : -1;
+    if (daysParam !== null && (days < 1 || days > DAILY_STATS_KEEP_DAYS)) return errorJson(400, `days wants 1-${DAILY_STATS_KEEP_DAYS}`);
+    const [o, series, domains, perDomain] = await Promise.all([
+      overview(env.DB),
+      dailyCounts(env.DB, Math.max(days, 1)),
+      domainCounts(env.DB, 30),
+      days ? domainDays(env.DB, days) : Promise.resolve(null),
+    ]);
+    const today = series.at(-1)!;
     const iso = (t: number | null | undefined) => (t ? new Date(t).toISOString() : null);
     return json({
       version: VERSION,
       messages: o.messages,
-      today: today!.received,
+      today: today.received,
       stored_bytes: o.storedBytes,
       max_store_bytes: intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024,
       retention_days: intVar(env.RETENTION_DAYS, 30, 0),
       oldest: iso(o.oldest),
       newest: iso(o.newest),
       parse_pending: o.pending,
+      // Big mail not parsed yet: parsed when read, or in the background with CRON_PARSE_DEFERRED.
+      parse_deferred: o.deferred,
       parse_failed: o.failed,
       // Mail that arrived but could not be stored. Non-zero means mail was lost.
       store_failures: o.storeFailures,
@@ -267,6 +285,10 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
       // Mail per recipient domain over the last 30 UTC days, most first.
       domains,
       domains_set_up: listVar(env.DOMAINS),
+      ...(perDomain && {
+        days: series.map((d) => ({ day: d.day, received: d.received, raw_bytes: d.rawBytes })),
+        domain_days: perDomain,
+      }),
     });
   }
 
@@ -520,7 +542,7 @@ export default {
 
   /** Every minute: parse the oldest pending messages (see CRON_PARSE_MAX). Once an hour: retention. */
   async scheduled(controller, env): Promise<void> {
-    const parsed = await parsePending(env, CRON_PARSE_BYTES, CRON_PARSE_MAX);
+    const parsed = await parsePending(env, CRON_PARSE_BYTES, CRON_PARSE_MAX, env.CRON_PARSE_DEFERRED === "1");
     if (parsed) console.log(JSON.stringify({ event: "parsed", count: parsed }));
     if (new Date(controller.scheduledTime).getUTCMinutes() === 17) {
       const result = await enforceRetention(env.DB, intVar(env.RETENTION_DAYS, 30, 0), intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024);

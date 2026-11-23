@@ -59,7 +59,8 @@ them.
   uses that word when a Worker accepts a message without forwarding it.
 - **An empty `body`/`text` in a search result:** big mail (over 64 KB) is
   parsed when something reads it. A read by id, `/api/wait`, or a list with
-  `to=` parses it.
+  `to=` parses it. On Workers Paid, `CRON_PARSE_DEFERRED=1` parses it in the
+  background too.
 - **`401` everywhere after re-running setup:** the key was rotated
   (`HUNTMAIL_API_KEY` was set). Use the new one.
 

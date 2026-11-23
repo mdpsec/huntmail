@@ -40,7 +40,11 @@
     "GZIP_MAX_BYTES": "131072",
     // Unparsed messages one per-address read (to=) parses before answering. 1 keeps reads inside
     // the free plan's 10 ms; on Paid use 25 so a mailbox listing never shows an empty body.
-    "TO_READ_PARSE_MAX": "1"
+    "TO_READ_PARSE_MAX": "1",
+    // "1": the per-minute run also parses big mail (over 64 KB, otherwise parsed only when read),
+    // newest first, so lists show its codes. Off on the free plan (a big parse can pass 10 ms);
+    // on Paid use "1".
+    "CRON_PARSE_DEFERRED": "0"
   }
   // Secret, set with `wrangler secret put API_KEY`: the read key for the API and inbox login.
 }

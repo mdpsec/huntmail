@@ -4,7 +4,7 @@ Base URL (`HUNTMAIL_URL`): `https://<worker-name>.<your-subdomain>.workers.dev/<
 
 **User-Agent:** Cloudflare's edge rejects Python's default `Python-urllib/x.y` User-Agent on `workers.dev` hosts with `error code: 1010` before the request reaches the Worker. Set any User-Agent header when using `urllib`. curl, wget, requests, httpx, aiohttp, Node and Go clients work as-is.
 
-`GET /health` needs no key and returns `{"ok": true, "version": "1.0.0"}` (the running HuntMail version).
+`GET /health` needs no key and returns `{"ok": true, "version": "1.1.0"}` (the running HuntMail version).
 
 All `/api/*` routes need the key, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Responses are JSON unless noted. Times are ISO 8601 UTC. `since` and `before` also accept unix seconds or milliseconds.
 
@@ -54,7 +54,7 @@ Anyone on the internet can send mail to any address on your domain, and can forg
 
 Mail is stored the moment it arrives and parsed later, to keep the arrival step inside the free plan's CPU limit. The first read that returns a message parses it, so callers rarely see `pending`. A read parses at most 1 pending message, and only on its first attempt; list reads only parse messages up to 48 KB. The per-minute cron parses the rest (up to 4, or about 256 KB of mail, a run) and retries failures on a smaller slice.
 
-Mail over 64 KB (mostly newsletters and marketing HTML; account mail with codes and links is almost always smaller) is `deferred`: the cron and searches skip it, and it is parsed only when something reads it: by id, opened in the inbox, returned by `/api/wait`, or listed with `to=`. Those reads return it parsed.
+Mail over 64 KB (mostly newsletters and marketing HTML; account mail with codes and links is almost always smaller) is `deferred`: searches skip it, and it is parsed when something reads it: by id, opened in the inbox, returned by `/api/wait`, or listed with `to=`. Those reads return it parsed. With `CRON_PARSE_DEFERRED=1` (for Workers Paid) the per-minute run also parses it in the background, newest first, so lists show its codes within a minute or two.
 
 A list with `to=` or `to_prefix=` (`/api/emails`, `/emails`, the inbox filtered by address) is a read of that mailbox, so it parses its unparsed messages of any size, newest first, up to `TO_READ_PARSE_MAX` per request (default 1 for the free plan; 25 recommended on Paid, so a mailbox listing never shows an empty body). A list without `to=` parses at most one small pending message. A message whose first parse died is left to the cron, so it can briefly show an empty body.
 
@@ -68,13 +68,14 @@ Long-poll. Returns the newest matching message as soon as one exists, plus `matc
 |---|---|
 | `to` | exact recipient |
 | `to_prefix` | recipient starts with this, e.g. `acme-` for every `acme-...@` address. 3 or more of `a-z 0-9 . _ + - @`, case-insensitive; not together with `to` |
+| `to_domain` | recipient domain, exact and case-insensitive: `yourdomain.com` matches `x@yourdomain.com`, not `x@sub.yourdomain.com` |
 | `subject` | subject contains (case-insensitive) |
 | `q` | subject, sender or header recipient contains (all sender-controlled) |
 | `from_domain` | only mail verified (DKIM or DMARC) for this domain or a subdomain of it |
 | `since` | only mail received after this. Default: the moment of the request |
 | `timeout` | seconds, default 30, max 50. Cloudflare drops a request that sends nothing for about 60 s, so loop for longer waits. |
 
-At least one of `to`, `to_prefix`, `subject`, `q` is required. Record a timestamp before triggering the mail and pass it as `since`, so mail that lands before the wait starts is not missed.
+At least one of `to`, `to_prefix`, `to_domain`, `subject`, `q` is required. Record a timestamp before triggering the mail and pass it as `since`, so mail that lands before the wait starts is not missed.
 
 ```bash
 SINCE=$(( $(date +%s) * 1000 ))
@@ -90,13 +91,15 @@ Search: `{"emails": [...], "next_cursor": "..."}`, the newest `limit` matches. F
 
 | Param | |
 |---|---|
-| `to`, `to_prefix`, `subject`, `q`, `from_domain`, `since`, `before` | filters, as above |
+| `to`, `to_prefix`, `to_domain`, `subject`, `q`, `from_domain`, `since`, `before` | filters, as above |
 | `limit` | default 20, max 200 |
 | `cursor` | `next_cursor` from the previous page |
 | `text` | `0` omits `text` |
 | `order` | `desc` (default, newest first) or `asc` (the same newest matches, newest last) |
 
 `to_prefix` suits a tool that gives each program or target its own address family (`acme-<time>-<random>@`) and wants all of that mail at once. Like `to`, it is a read of those mailboxes: what it returns is marked read (kept longest at the size cap) and their unparsed mail is parsed, up to `TO_READ_PARSE_MAX` per request.
+
+`to_domain` lists all mail for one of your domains. It is a search, not a mailbox read: it marks nothing read and parses nothing (see `CRON_PARSE_DEFERRED` for codes on big mail).
 
 ### `GET /api/emails/:id`
 
@@ -122,7 +125,9 @@ npx playwright screenshot --full-page "$LINK" email.png
 
 ### `GET /api/stats`
 
-`version` (the running HuntMail version), message count, stored bytes and cap, retention, oldest and newest, parse backlog (`parse_pending`, which excludes deferred big mail, and `parse_failed`), and `store_failures` / `last_store_failure`: mail that arrived but could not be stored. `domains` lists mail per recipient domain over the last 30 UTC days (`domain`, `received`, `today`), most first; `domains_set_up` is the `DOMAINS` setting. A non-zero `store_failures` means mail was lost.
+`version` (the running HuntMail version), message count, stored bytes and cap, retention, oldest and newest, parse backlog (`parse_pending`, which excludes deferred big mail; `parse_deferred`, big mail not parsed yet; and `parse_failed`), and `store_failures` / `last_store_failure`: mail that arrived but could not be stored. `domains` lists mail per recipient domain over the last 30 UTC days (`domain`, `received`, `today`), most first; `domains_set_up` is the `DOMAINS` setting. A non-zero `store_failures` means mail was lost.
+
+`?days=N` (1 to 400) adds `days`, mail per UTC day for the last N days, oldest first with today last, zero-filled (`day`, `received`, `raw_bytes`), and `domain_days`, mail per recipient domain per day over the same days (`day`, `domain`, `received`; days with mail only, by day then domain). Without it the response has neither.
 
 ## Rendered view: `<base>/view/:id?t=...`
 

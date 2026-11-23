@@ -190,6 +190,32 @@ describe("ingest", () => {
     expect(body.map((r) => r.codes[0]).sort()).toEqual(["400000", "400001", "400002"]);
   });
 
+  it("with CRON_PARSE_DEFERRED, the cron also parses big mail, newest first, after small pending mail", async () => {
+    await deliver(plain("Code 500001\n" + "d".repeat(70_000)), { to: "old@hunt.example" });
+    await deliver(plain("Code 500002\n" + "e".repeat(70_000)), { to: "new@hunt.example" });
+    await deliver(plain("small 500003"), { to: "small@hunt.example" });
+    const status = async (to: string) =>
+      (await env.DB.prepare("SELECT parse_status FROM messages WHERE envelope_to = ?").bind(to).first<{ parse_status: string }>())!.parse_status;
+    expect((await apiJson("/api/stats")).body.parse_deferred).toBe(2);
+    // Off by default: the cron leaves big mail alone.
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 5) }), env);
+    expect([await status("small@hunt.example"), await status("new@hunt.example"), await status("old@hunt.example")]).toEqual(["ok", "deferred", "deferred"]);
+    const on = { ...env, CRON_PARSE_DEFERRED: "1" };
+    // The 256 KB budget: each 70 KB message counts in full, and the first one always runs.
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 6) }), on);
+    expect(await status("new@hunt.example")).toBe("ok");
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 7) }), on);
+    expect(await status("old@hunt.example")).toBe("ok");
+    const st = (await apiJson("/api/stats")).body;
+    expect([st.parse_deferred, st.parse_pending]).toEqual([0, 0]);
+    const rows = (await apiJson("/api/emails?text=0")).body.emails;
+    expect(rows.map((m: any) => m.codes[0]).sort()).toEqual(["500001", "500002", "500003"]);
+    const r = await env.DB.prepare(`SELECT (SELECT v FROM meta WHERE k = 'stored_bytes') AS counted, SUM(stored_size) AS rows FROM messages`).first<any>();
+    expect(r.counted).toBe(r.rows);
+    const plan = await env.DB.prepare("EXPLAIN QUERY PLAN SELECT id, raw_size FROM messages WHERE parse_status = 'deferred' ORDER BY received_at DESC LIMIT 4").all<{ detail: string }>();
+    expect(plan.results.map((p) => p.detail).join(" ")).toMatch(/messages_deferred/);
+  });
+
   it("a deferred read whose parse dies is retried by the cron", async () => {
     await deliver(plain("code 246802 " + "y".repeat(70_000)), { to: "die@hunt.example" });
     const id = (await env.DB.prepare("SELECT id FROM messages").first<{ id: string }>())!.id;
@@ -274,6 +300,29 @@ describe("api", () => {
       "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE envelope_to >= ? AND envelope_to < ? ORDER BY received_at DESC LIMIT 20",
     ).bind("acme-", "acme.").all<{ detail: string }>();
     expect(plan.results.map((r) => r.detail).join(" ")).toMatch(/messages_to_time/);
+  });
+
+  it("to_domain lists mail for one recipient domain, exactly, from an index, without marking it read", async () => {
+    await deliver(plain("a"), { to: "x@one.example" });
+    await deliver(plain("b"), { to: "y@One.example" });
+    await deliver(plain("c"), { to: "z@sub.one.example" });
+    await deliver(plain("d"), { to: "w@one.example.net" });
+    const to = async (qs: string) => (await apiJson(`/api/emails?${qs}`)).body.emails.map((m: any) => m.to).sort();
+    expect(await to("to_domain=ONE.example")).toEqual(["x@one.example", "y@one.example"]);
+    expect(await to("to_domain=sub.one.example")).toEqual(["z@sub.one.example"]);
+    expect(await to("to_domain=one.example&to_prefix=x@o")).toEqual(["x@one.example"]);
+    expect(await to("to_domain=one.example&to=x@one.example")).toEqual(["x@one.example"]);
+    expect((await apiJson("/emails?to_domain=one.example")).body.map((m: any) => m.to).sort()).toEqual(["x@one.example", "y@one.example"]);
+    const w = await apiJson("/api/wait?to_domain=sub.one.example&since=0&timeout=1");
+    expect(w.body.to).toBe("z@sub.one.example");
+    for (const bad of ["a%20b", "one.example%25", "x@one.example", "a".repeat(254)]) expect((await apiJson(`/api/emails?to_domain=${bad}`)).status).toBe(400);
+    const read = await env.DB.prepare("SELECT envelope_to FROM messages WHERE read_at IS NOT NULL").all<{ envelope_to: string }>();
+    // Only the to= list and the wait marked mail read; to_domain lists did not.
+    expect(read.results.map((r) => r.envelope_to).sort()).toEqual(["x@one.example", "z@sub.one.example"]);
+    const plan = await env.DB.prepare(
+      "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE substr(envelope_to, instr(envelope_to, '@') + 1) = ? ORDER BY received_at DESC LIMIT 20",
+    ).bind("one.example").all<{ detail: string }>();
+    expect(plan.results.map((r) => r.detail).join(" ")).toMatch(/messages_to_domain_time/);
   });
 
   it("requires the api key", async () => {
@@ -955,6 +1004,29 @@ describe("domain stats", () => {
     expect(page).toMatch(/three\.example<\/td><td class="hide-sm"><span class="mut">no mail yet/);
     expect(page).toContain("not in DOMAINS"); // two.example got mail but is not listed
     expect(page).toContain("most mail: one.example");
+  });
+
+  it("?days=N adds the daily series and mail per domain per day; without it the response is unchanged", async () => {
+    await deliver(plain("a"), { to: "x@one.example" });
+    await deliver(plain("b"), { to: "y@two.example" });
+    await deliver(plain("c"), { to: "z@two.example" });
+    const plain0 = (await apiJson("/api/stats")).body;
+    expect(plain0.days).toBeUndefined();
+    expect(plain0.domain_days).toBeUndefined();
+    const st = (await apiJson("/api/stats?days=30")).body;
+    const today = new Date().toISOString().slice(0, 10);
+    expect(st.days).toHaveLength(30);
+    expect(st.days.at(-1)).toMatchObject({ day: today, received: 3 });
+    expect(st.days.at(-1).raw_bytes).toBeGreaterThan(0);
+    expect(st.days[0].received).toBe(0);
+    expect(st.today).toBe(3);
+    expect(st.domain_days).toEqual([
+      { day: today, domain: "one.example", received: 1 },
+      { day: today, domain: "two.example", received: 2 },
+    ]);
+    expect((await apiJson("/api/stats?days=1")).body.days).toHaveLength(1);
+    expect((await apiJson("/api/stats?days=400")).body.days).toHaveLength(400);
+    for (const bad of ["0", "401", "x", "-1", "1.5", ""]) expect((await apiJson(`/api/stats?days=${bad}`)).status).toBe(400);
   });
 
   it("migration 0007 backfills the tally from stored mail", async () => {

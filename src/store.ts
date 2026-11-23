@@ -223,6 +223,8 @@ export interface ListQuery {
    * of addresses such as `acme-` or `acme-1731942000-`. An index range, not a LIKE scan.
    */
   toPrefix?: string;
+  /** Recipient domain, exact (lowercase, validated by the caller). Uses messages_to_domain_time. */
+  toDomain?: string;
   subject?: string;
   q?: string;
   /** Only mail with a passing DKIM signature (or DMARC pass) for this domain or a subdomain of it. */
@@ -259,6 +261,11 @@ function whereClause(q: Omit<ListQuery, "limit" | "withText" | "order">): { sql:
     const p = q.toPrefix;
     where.push(`envelope_to >= ? AND envelope_to < ?`);
     args.push(p, p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length - 1) + 1));
+  }
+  if (q.toDomain) {
+    // The same expression as the messages_to_domain_time index, so SQLite uses it.
+    where.push(`substr(envelope_to, instr(envelope_to, '@') + 1) = ?`);
+    args.push(q.toDomain);
   }
   if (q.subject) {
     where.push(`subject LIKE ? ESCAPE '\\'`);
@@ -486,17 +493,20 @@ export interface Overview {
   oldest: number | null;
   newest: number | null;
   pending: number;
+  /** Big mail not parsed yet (parsed when read, or by the cron with CRON_PARSE_DEFERRED). */
+  deferred: number;
   failed: number;
   storeFailures: number;
   lastStoreFailure: number;
 }
 
 export async function overview(db: D1Database): Promise<Overview> {
-  const [counters, oldest, newest, pending, failed, failures, lastFailure] = await db.batch([
+  const [counters, oldest, newest, pending, deferred, failed, failures, lastFailure] = await db.batch([
     db.prepare(`SELECT v, n FROM meta WHERE k = 'stored_bytes'`),
     db.prepare(`SELECT MIN(received_at) AS t FROM messages`),
     db.prepare(`SELECT MAX(received_at) AS t FROM messages`),
     db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'pending'`),
+    db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'deferred'`),
     db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'failed'`),
     db.prepare(`SELECT v FROM meta WHERE k = 'store_failures'`),
     db.prepare(`SELECT v FROM meta WHERE k = 'last_store_failure'`),
@@ -508,6 +518,7 @@ export async function overview(db: D1Database): Promise<Overview> {
     oldest: first<{ t: number | null }>(oldest)?.t ?? null,
     newest: first<{ t: number | null }>(newest)?.t ?? null,
     pending: first<{ c: number }>(pending)?.c ?? 0,
+    deferred: first<{ c: number }>(deferred)?.c ?? 0,
     failed: first<{ c: number }>(failed)?.c ?? 0,
     storeFailures: first<{ v: number }>(failures)?.v ?? 0,
     lastStoreFailure: first<{ v: number }>(lastFailure)?.v ?? 0,
@@ -577,6 +588,22 @@ export interface DomainCount {
  * Messages per recipient domain over the last `days` UTC days, most first, from the per-domain
  * daily tally (a few rows per day, never the messages table).
  */
+export interface DomainDay {
+  day: string;
+  domain: string;
+  received: number;
+}
+
+/** Mail per recipient domain per UTC day over the last `days` days, days with mail only, by day then domain. */
+export async function domainDays(db: D1Database, days: number, now = Date.now()): Promise<DomainDay[]> {
+  const from = new Date(now - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const { results } = await db
+    .prepare(`SELECT day, domain, received FROM domain_daily WHERE day >= ?1 ORDER BY day, domain`)
+    .bind(from)
+    .all<DomainDay>();
+  return results;
+}
+
 export async function domainCounts(db: D1Database, days: number, now = Date.now(), limit = 50): Promise<DomainCount[]> {
   const dayOf = (t: number) => new Date(t).toISOString().slice(0, 10);
   const { results } = await db

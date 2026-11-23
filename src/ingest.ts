@@ -289,13 +289,26 @@ export async function parseMessage(env: Env, id: string, opts: { firstAttemptOnl
   return true;
 }
 
-/** Parse pending messages (never deferred ones), oldest first, until about `byteBudget` raw bytes have been handled. */
-export async function parsePending(env: Env, byteBudget: number, maxMessages = 20): Promise<number> {
-  const { results } = await env.DB.prepare(
+/**
+ * Parse pending messages, oldest first, until about `byteBudget` raw bytes have been handled.
+ * With `deferred`, the rest of the run then takes deferred (big) mail, newest first, so the
+ * latest mail gets its codes first (CRON_PARSE_DEFERRED; best on Workers Paid, where a run has
+ * the CPU for it).
+ */
+export async function parsePending(env: Env, byteBudget: number, maxMessages = 20, deferred = false): Promise<number> {
+  let { results } = await env.DB.prepare(
     `SELECT id, raw_size FROM messages WHERE parse_status = 'pending' ORDER BY received_at LIMIT ?1`,
   )
     .bind(maxMessages)
     .all<{ id: string; raw_size: number }>();
+  if (deferred && results.length < maxMessages) {
+    const more = await env.DB.prepare(
+      `SELECT id, raw_size FROM messages WHERE parse_status = 'deferred' ORDER BY received_at DESC LIMIT ?1`,
+    )
+      .bind(maxMessages - results.length)
+      .all<{ id: string; raw_size: number }>();
+    results = results.concat(more.results);
+  }
   const perMessage = (size: number) => Math.min(size, intVar(env.PARSE_BYTES, DEFAULT_PARSE_BYTES, 16 * 1024));
   let spent = 0;
   let done = 0;

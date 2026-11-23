@@ -5,6 +5,21 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.1.0 (2026-11-23)
+
+- `/api/stats?days=N` adds mail per day (`days`) and per domain per day
+  (`domain_days`); `/api/stats` also reports `parse_deferred`, big mail not
+  parsed yet.
+- `to_domain` filter (`/api/emails`, `/api/wait`, `/emails`): all mail for one
+  recipient domain, from an index.
+- `CRON_PARSE_DEFERRED` (default `0`): on Workers Paid, `1` has the per-minute
+  run parse big mail too, newest first, so lists show its codes without a read.
+- Migration 0008: indexes for `to_domain` and for deferred mail.
+
+Upgrading: `git pull`, then `pnpm redeploy` (or re-run `scripts/setup.sh`), which
+applies migration 0008 before deploying. On Workers Paid, also set
+`CRON_PARSE_DEFERRED` to `"1"` in `wrangler.local.jsonc`.
+
 ## v1.0.0 (2026-11-23)
 
 The first public release.
