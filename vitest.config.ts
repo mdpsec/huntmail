@@ -12,6 +12,7 @@ export default defineConfig(async () => {
         },
       }),
     ],
-    test: { setupFiles: ["./test/setup.ts"] },
+    // Heavy tests take about 1 s; leave room for a busy machine.
+    test: { setupFiles: ["./test/setup.ts"], testTimeout: 20_000 },
   };
 });

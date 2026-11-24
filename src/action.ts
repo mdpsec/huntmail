@@ -27,7 +27,7 @@ const KINDS: { kind: ActionKind; text: RegExp; url: RegExp }[] = [
   {
     kind: "Reset",
     text: /reset|(set|choose|create|change) (a |your )?(new )?password|recover/,
-    url: /(?:^|[^a-z0-9])(?:reset[-_/]?pass|pass(?:word)?[-_/]?reset|recover)/,
+    url: /(?:^|[^a-z0-9])(?:reset[-_/]?pass|pass(?:word)?[-_/]?(?:reset|change|forgot)|forgot[-_/]?pass|recover)/,
   },
   {
     kind: "Sign in",

@@ -1,4 +1,5 @@
 import { actionLink, type ActionLink } from "./action";
+import { fromDomain } from "./bulk";
 import type { LinkDetail } from "./extract";
 import { concatBytes, gunzip } from "./util";
 
@@ -32,6 +33,8 @@ export interface NewMessage {
   rawTruncated: boolean;
   stored: Uint8Array;
   compressed: boolean;
+  /** Newsletter headers and a subject that does not look like account mail (see bulk.ts). */
+  bulk: boolean;
 }
 
 export interface AttachmentMeta {
@@ -69,6 +72,8 @@ interface Row {
   auth_dmarc: string;
   verified_domains: string;
   spam_score: number | null;
+  bulk: number;
+  has_action: number;
 }
 
 export interface MessageOut {
@@ -94,6 +99,10 @@ export interface MessageOut {
   raw_size: number;
   raw_truncated: boolean;
   parse_status: string;
+  /** Newsletter headers, parsed, no code and no action link: hidden by `newsletters=hide`. */
+  newsletter: boolean;
+  /** The From header's domain, lowercased ("" without one): the value a sender block takes. */
+  sender_domain: string;
 }
 
 /** Links are stored as `{url, text}` objects; plain URL strings are accepted too. */
@@ -129,6 +138,8 @@ export function toOut(r: Row): MessageOut {
     raw_size: r.raw_size,
     raw_truncated: r.raw_truncated === 1,
     parse_status: r.parse_status,
+    newsletter: r.bulk === 1 && r.has_action === 0 && r.codes === "[]" && (r.parse_status === "ok" || r.parse_status === "partial"),
+    sender_domain: fromDomain(r.header_from),
   };
   if (r.text !== undefined) out.text = r.text;
   return out;
@@ -159,8 +170,8 @@ export async function insertMessage(db: D1Database, m: NewMessage): Promise<void
       .prepare(
         `INSERT INTO messages (id, received_at, envelope_to, envelope_from, header_from, header_to, subject,
           message_id, sent_at, codes, raw_size, stored_size, compressed, chunk_count, raw_truncated,
-          auth_spf, auth_dkim, auth_dmarc, verified_domains, spam_score, parse_status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)`,
+          auth_spf, auth_dkim, auth_dmarc, verified_domains, spam_score, parse_status, bulk)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)`,
       )
       .bind(
         m.id,
@@ -184,6 +195,7 @@ export async function insertMessage(db: D1Database, m: NewMessage): Promise<void
         verified,
         m.auth.spamScore,
         arrivalStatus(m.rawSize),
+        m.bulk ? 1 : 0,
       ),
     ...chunks.map((c, seq) =>
       db.prepare(`INSERT INTO raw_chunks (message_id, seq, data) VALUES (?1, ?2, ?3)`).bind(m.id, seq, c),
@@ -229,6 +241,8 @@ export interface ListQuery {
   toPrefix?: string;
   /** Recipient domain, exact (lowercase, validated by the caller). Uses messages_to_domain_time. */
   toDomain?: string;
+  /** Leave newsletters out, or list only them (see NEWSLETTER_SQL). */
+  newsletters?: "hide" | "only";
   subject?: string;
   q?: string;
   /** Only mail with a passing DKIM signature (or DMARC pass) for this domain or a subdomain of it. */
@@ -246,8 +260,14 @@ export interface ListQuery {
 
 const LIGHT_COLS = `id, received_at, envelope_to, envelope_from, header_from, header_to, subject, message_id, sent_at,
   has_html, codes, raw_size, raw_truncated, stored_size, compressed, chunk_count, parse_status,
-  auth_spf, auth_dkim, auth_dmarc, verified_domains, spam_score`;
+  auth_spf, auth_dkim, auth_dmarc, verified_domains, spam_score, bulk, has_action`;
 const SUMMARY_COLS = `${LIGHT_COLS}, links, attachments`;
+
+/**
+ * A newsletter: bulk at arrival, parsed, and no code and no action link. The same text as the
+ * messages_newsletter index (migration 0009), so SQLite can use it.
+ */
+export const NEWSLETTER_SQL = `bulk = 1 AND has_action = 0 AND codes = '[]' AND parse_status IN ('ok', 'partial')`;
 
 function likeEscape(s: string): string {
   return s.replace(/[\\%_]/g, (c) => "\\" + c);
@@ -270,6 +290,9 @@ function whereClause(q: Omit<ListQuery, "limit" | "withText" | "order">): { sql:
     // The same expression as the messages_to_domain_time index, so SQLite uses it.
     where.push(`substr(envelope_to, instr(envelope_to, '@') + 1) = ?`);
     args.push(q.toDomain);
+  }
+  if (q.newsletters) {
+    where.push(q.newsletters === "only" ? NEWSLETTER_SQL : `NOT (${NEWSLETTER_SQL})`);
   }
   if (q.subject) {
     where.push(`subject LIKE ? ESCAPE '\\'`);
@@ -435,11 +458,21 @@ async function deleteIds(db: D1Database, ids: string[]): Promise<void> {
 export async function evictForSpace(db: D1Database, bytes: number, maxRounds = 20): Promise<{ deleted: number; freed: number }> {
   let freed = 0;
   let deleted = 0;
+  // Newsletters go first, oldest first; then unread mail, then read mail.
+  let newsletters = true;
   for (let round = 0; round < maxRounds && freed < bytes; round++) {
     const { results } = await db
-      .prepare(`SELECT id, stored_size FROM messages ORDER BY (read_at IS NOT NULL), received_at LIMIT 200`)
+      .prepare(
+        newsletters
+          ? `SELECT id, stored_size FROM messages WHERE ${NEWSLETTER_SQL} ORDER BY received_at LIMIT 200`
+          : `SELECT id, stored_size FROM messages ORDER BY (read_at IS NOT NULL), received_at LIMIT 200`,
+      )
       .all<{ id: string; stored_size: number }>();
-    if (!results.length) break;
+    if (!results.length) {
+      if (!newsletters) break;
+      newsletters = false;
+      continue;
+    }
     const ids: string[] = [];
     for (const r of results) {
       if (freed >= bytes) break;
@@ -454,17 +487,19 @@ export async function evictForSpace(db: D1Database, bytes: number, maxRounds = 2
 
 export interface RetentionResult {
   expired: number;
+  /** Newsletters past NEWSLETTER_RETENTION_DAYS. */
+  newsletters: number;
   trimmed: number;
   stored_bytes: number;
 }
 
 const DELETE_BATCH = 500;
 
-async function deleteOlderThan(db: D1Database, cutoff: number, maxLoops = 40): Promise<number> {
+async function deleteOlderThan(db: D1Database, cutoff: number, maxLoops = 40, only = ""): Promise<number> {
   let total = 0;
   for (let i = 0; i < maxLoops; i++) {
     const { results } = await db
-      .prepare(`SELECT id FROM messages WHERE received_at < ?1 ORDER BY received_at LIMIT ${DELETE_BATCH}`)
+      .prepare(`SELECT id FROM messages WHERE ${only ? `${only} AND ` : ""}received_at < ?1 ORDER BY received_at LIMIT ${DELETE_BATCH}`)
       .bind(cutoff)
       .all<{ id: string }>();
     if (!results.length) break;
@@ -475,8 +510,18 @@ async function deleteOlderThan(db: D1Database, cutoff: number, maxLoops = 40): P
   return total;
 }
 
-export async function enforceRetention(db: D1Database, retentionDays: number, maxStoreBytes: number, now = Date.now()): Promise<RetentionResult> {
+export async function enforceRetention(
+  db: D1Database,
+  retentionDays: number,
+  maxStoreBytes: number,
+  now = Date.now(),
+  newsletterDays = 0,
+): Promise<RetentionResult> {
   const expired = retentionDays > 0 ? await deleteOlderThan(db, now - retentionDays * 86_400_000) : 0;
+  const newsletters =
+    newsletterDays > 0 && (retentionDays === 0 || newsletterDays < retentionDays)
+      ? await deleteOlderThan(db, now - newsletterDays * 86_400_000, 40, NEWSLETTER_SQL)
+      : 0;
   let trimmed = 0;
   const total = await storedBytes(db);
   if (maxStoreBytes > 0 && total > maxStoreBytes) trimmed = (await evictForSpace(db, total - maxStoreBytes)).deleted;
@@ -485,7 +530,7 @@ export async function enforceRetention(db: D1Database, retentionDays: number, ma
     db.prepare(`DELETE FROM daily_stats WHERE day < ?1`).bind(keepFrom),
     db.prepare(`DELETE FROM domain_daily WHERE day < ?1`).bind(keepFrom),
   ]);
-  return { expired, trimmed, stored_bytes: await storedBytes(db) };
+  return { expired, newsletters, trimmed, stored_bytes: await storedBytes(db) };
 }
 
 // Stats. Every query here reads a handful of rows (meta counters, index endpoints, partial
@@ -499,18 +544,29 @@ export interface Overview {
   pending: number;
   /** Big mail not parsed yet (parsed when read, or by the cron with CRON_PARSE_DEFERRED). */
   deferred: number;
+  /** Newsletters stored now (NEWSLETTER_SQL). */
+  newsletters: number;
+  /** Mail rejected by a block, ever. */
+  blocked: number;
   failed: number;
   storeFailures: number;
   lastStoreFailure: number;
 }
 
+/** Newsletters stored now; reads the messages_newsletter partial index only. */
+export async function newsletterCount(db: D1Database): Promise<number> {
+  return (await db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE ${NEWSLETTER_SQL}`).first<{ c: number }>())?.c ?? 0;
+}
+
 export async function overview(db: D1Database): Promise<Overview> {
-  const [counters, oldest, newest, pending, deferred, failed, failures, lastFailure] = await db.batch([
+  const [counters, oldest, newest, pending, deferred, newsletters, blocked, failed, failures, lastFailure] = await db.batch([
     db.prepare(`SELECT v, n FROM meta WHERE k = 'stored_bytes'`),
     db.prepare(`SELECT MIN(received_at) AS t FROM messages`),
     db.prepare(`SELECT MAX(received_at) AS t FROM messages`),
     db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'pending'`),
     db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'deferred'`),
+    db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE ${NEWSLETTER_SQL}`),
+    db.prepare(`SELECT v FROM meta WHERE k = 'blocked'`),
     db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE parse_status = 'failed'`),
     db.prepare(`SELECT v FROM meta WHERE k = 'store_failures'`),
     db.prepare(`SELECT v FROM meta WHERE k = 'last_store_failure'`),
@@ -523,6 +579,8 @@ export async function overview(db: D1Database): Promise<Overview> {
     newest: first<{ t: number | null }>(newest)?.t ?? null,
     pending: first<{ c: number }>(pending)?.c ?? 0,
     deferred: first<{ c: number }>(deferred)?.c ?? 0,
+    newsletters: first<{ c: number }>(newsletters)?.c ?? 0,
+    blocked: first<{ v: number }>(blocked)?.v ?? 0,
     failed: first<{ c: number }>(failed)?.c ?? 0,
     storeFailures: first<{ v: number }>(failures)?.v ?? 0,
     lastStoreFailure: first<{ v: number }>(lastFailure)?.v ?? 0,

@@ -1003,6 +1003,150 @@ describe("version", () => {
   });
 });
 
+describe("newsletters and blocks", () => {
+  const NL = ["List-Unsubscribe: <https://news.shop.example/u?x=1>", "List-Unsubscribe-Post: List-Unsubscribe=One-Click"];
+  const news = (subject: string, body = "Big sale this week.") => plain(body, { subject, from: "Shop <news@mail.shop.example>", extraHeaders: NL });
+  const parseAll = async () => {
+    for (let i = 0; i < 4; i++) await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 5 + i) }), env);
+  };
+
+  it("a newsletter has unsubscribe headers, is parsed, and has no code, no action link and no account subject", async () => {
+    await deliver(news("This week's deals"), { to: "a@hunt.example" });
+    await deliver(news("Deals, and your code", "Use 482913 to sign in"), { to: "b@hunt.example" });
+    await deliver(htmlOnly('<a href="https://shop.example/verify?t=1">Verify your email</a>', { subject: "Hello from Shop", extraHeaders: NL }), { to: "c@hunt.example" });
+    await deliver(news("Verify your email address"), { to: "d@hunt.example" });
+    await deliver(plain("No headers", { subject: "Plain mail" }), { to: "e@hunt.example" });
+    const before = (await apiJson("/api/emails?text=0")).body.emails;
+    expect(before.every((m: any) => m.newsletter === false)).toBe(true); // unparsed mail never is
+    await parseAll();
+    const by = async () => Object.fromEntries((await apiJson("/api/emails?text=0")).body.emails.map((m: any) => [m.to, m.newsletter]));
+    expect((await apiJson("/api/emails?to=a@hunt.example")).body.emails[0].sender_domain).toBe("mail.shop.example");
+    expect(await by()).toEqual({ "a@hunt.example": true, "b@hunt.example": false, "c@hunt.example": false, "d@hunt.example": false, "e@hunt.example": false });
+    const to = async (qs: string) => (await apiJson(`/api/emails?text=0&${qs}`)).body.emails.map((m: any) => m.to).sort();
+    expect(await to("newsletters=hide")).toEqual(["b@hunt.example", "c@hunt.example", "d@hunt.example", "e@hunt.example"]);
+    expect(await to("newsletters=only")).toEqual(["a@hunt.example"]);
+    expect((await apiJson("/emails?newsletters=only")).body.map((m: any) => m.to)).toEqual(["a@hunt.example"]);
+    expect((await apiJson("/api/emails?newsletters=all")).status).toBe(400);
+    expect((await apiJson("/api/stats")).body.newsletters).toBe(1);
+    // A wait never hides anything.
+    expect((await apiJson("/api/wait?to=a@hunt.example&since=0&timeout=1&newsletters=hide")).body.to).toBe("a@hunt.example");
+    const plan = await env.DB.prepare(
+      "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM messages WHERE bulk = 1 AND has_action = 0 AND codes = '[]' AND parse_status IN ('ok', 'partial')",
+    ).all<{ detail: string }>();
+    expect(plan.results.map((p) => p.detail).join(" ")).toMatch(/messages_newsletter/);
+  });
+
+  it("newsletters=hide pages with a cursor and combines with to_domain and q", async () => {
+    for (let i = 0; i < 5; i++) {
+      await deliver(news(`Deal ${i}`), { to: `n${i}@one.example` });
+      await deliver(plain(`keep ${i}`, { subject: `Keep ${i}` }), { to: `k${i}@one.example` });
+    }
+    await deliver(plain("other", { subject: "Keep other" }), { to: "k@two.example" });
+    await parseAll();
+    const seen: string[] = [];
+    let cursor = "";
+    for (let page = 0; page < 5; page++) {
+      const r = (await apiJson(`/api/emails?text=0&limit=2&newsletters=hide&to_domain=one.example${cursor ? `&cursor=${cursor}` : ""}`)).body;
+      seen.push(...r.emails.map((m: any) => m.to));
+      if (!r.next_cursor) break;
+      cursor = r.next_cursor;
+    }
+    expect(seen.sort()).toEqual(["k0@one.example", "k1@one.example", "k2@one.example", "k3@one.example", "k4@one.example"]);
+    expect((await apiJson("/api/emails?text=0&newsletters=hide&q=Keep%203")).body.emails.map((m: any) => m.to)).toEqual(["k3@one.example"]);
+  });
+
+  it("the cap evicts newsletters first, and NEWSLETTER_RETENTION_DAYS drops them sooner", async () => {
+    await deliver(news("Old deals"), { to: "old-news@hunt.example" });
+    await deliver(plain("keep me", { subject: "Keep" }), { to: "keep@hunt.example" });
+    await parseAll();
+    const { evictForSpace, enforceRetention } = await import("../src/store");
+    const r = await evictForSpace(env.DB, 1);
+    expect(r.deleted).toBe(1);
+    const left = () => apiJson("/api/emails?text=0").then((x) => x.body.emails.map((m: any) => m.to));
+    expect(await left()).toEqual(["keep@hunt.example"]);
+    await deliver(news("More deals"), { to: "news2@hunt.example" });
+    await parseAll();
+    const now = Date.now() + 3 * 86_400_000;
+    let res = await enforceRetention(env.DB, 30, 1e12, now, 0);
+    expect(res.newsletters).toBe(0);
+    res = await enforceRetention(env.DB, 30, 1e12, now, 2);
+    expect(res.newsletters).toBe(1);
+    expect(await left()).toEqual(["keep@hunt.example"]);
+    const sum = await env.DB.prepare(`SELECT (SELECT v FROM meta WHERE k = 'stored_bytes') AS counted, COALESCE(SUM(stored_size), 0) AS rows FROM messages`).first<any>();
+    expect(sum.counted).toBe(sum.rows);
+  });
+
+  it("blocks: an idempotent API, and mail rejected at arrival, never stored", async () => {
+    const post = (b: object) => apiJson("/api/blocks", { method: "POST", body: JSON.stringify(b), headers: { "content-type": "application/json" } });
+    const s1 = await post({ kind: "sender", value: "shop.example" });
+    expect(s1.status).toBe(201);
+    expect(s1.body).toMatchObject({ kind: "sender", value: "shop.example", scope: "newsletters", hits: 0, last_hit: null });
+    const again = await post({ kind: "sender", value: "SHOP.example" });
+    expect(again.status).toBe(200);
+    expect(again.body.id).toBe(s1.body.id);
+    expect((await post({ kind: "recipient", value: "burned@hunt.example" })).status).toBe(201);
+    expect((await post({ kind: "prefix", value: "acme-" })).status).toBe(201);
+    expect((await post({ kind: "prefix", value: "a" })).status).toBe(400);
+    expect((await apiJson("/api/blocks")).body.blocks).toHaveLength(3);
+
+    // Newsletters from shop.example (and subdomains) bounce; its account mail still arrives.
+    const n = await deliver(news("Weekend sale"), { to: "x@hunt.example" });
+    expect(n.setReject).toHaveBeenCalled();
+    const acct = await deliver(plain("Your code 551122", { subject: "Your Shop code", from: "Shop <no-reply@shop.example>", extraHeaders: NL }), { to: "x@hunt.example" });
+    expect(acct.setReject).not.toHaveBeenCalled();
+    // Address and family blocks take everything.
+    expect((await deliver(plain("hi", { subject: "Hi" }), { to: "burned@hunt.example" })).setReject).toHaveBeenCalled();
+    expect((await deliver(plain("hi", { subject: "Your code 123456" }), { to: "acme-1763-x@hunt.example" })).setReject).toHaveBeenCalled();
+    expect((await deliver(plain("hi", { subject: "Hi" }), { to: "acmex@hunt.example" })).setReject).not.toHaveBeenCalled();
+    const stored = (await apiJson("/api/emails?text=0")).body.emails.map((m: any) => m.to).sort();
+    expect(stored).toEqual(["acmex@hunt.example", "x@hunt.example"]);
+    const blocks = (await apiJson("/api/blocks")).body.blocks;
+    expect(blocks.find((b: any) => b.kind === "sender").hits).toBe(1);
+    expect(blocks.find((b: any) => b.kind === "sender").last_hit).toMatch(/^20/);
+    expect((await apiJson("/api/stats")).body.blocked).toBe(3);
+
+    // scope "all" on a sender takes its account mail too; DELETE removes a block.
+    await post({ kind: "sender", value: "shop.example", scope: "all" });
+    expect((await deliver(plain("code 1", { subject: "Your Shop code", from: "no-reply@shop.example" }), { to: "x@hunt.example" })).setReject).toHaveBeenCalled();
+    for (const b of (await apiJson("/api/blocks")).body.blocks) expect((await apiJson(`/api/blocks/${b.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await apiJson("/api/blocks/999", { method: "DELETE" })).status).toBe(404);
+    expect((await deliver(news("Weekend sale"), { to: "x@hunt.example" })).setReject).not.toHaveBeenCalled();
+  });
+
+  it("the inbox hides newsletters unless asked, and blocks from the message page with an Origin check", async () => {
+    await deliver(news("Deals"), { to: "a@hunt.example" });
+    await deliver(plain("keep", { subject: "Keep" }), { to: "b@hunt.example" });
+    await parseAll();
+    const res = await worker.fetch(new Request(`${BASE}/login`, { method: "POST", body: new URLSearchParams({ key: KEY }) }), env);
+    const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    const get = async (path: string) => (await SELF.fetch(`${BASE}${path}`, { headers: { cookie } })).text();
+    const inbox = await get("/inbox");
+    expect(inbox).toContain("1 newsletter hidden");
+    expect(inbox).not.toContain("a@hunt.example");
+    expect(await get("/inbox?newsletters=show")).toContain("a@hunt.example");
+    expect(await get("/inbox?to=a@hunt.example")).toContain('class="tag"'); // one address shows everything
+    const id = (await apiJson("/api/emails?to=a@hunt.example")).body.emails[0].id;
+    const page = await get(`/inbox/${id}`);
+    expect(page).toContain("Block newsletters from mail.shop.example");
+    const form = (v: Record<string, string>, origin?: string) =>
+      SELF.fetch(`${BASE}/blocks`, { method: "POST", redirect: "manual", body: new URLSearchParams(v), headers: { cookie, ...(origin ? { origin } : {}) } });
+    expect((await form({ kind: "sender", value: "mail.shop.example", scope: "newsletters", back: `${ROOT}/inbox/${id}` }, "https://evil.example")).status).toBe(403);
+    const ok = await form({ kind: "sender", value: "mail.shop.example", scope: "newsletters", back: `${ROOT}/inbox/${id}` }, ORIGIN);
+    expect(ok.status).toBe(303);
+    expect(ok.headers.get("location")).toBe(`${ROOT}/inbox/${id}`);
+    expect((await form({ kind: "sender", value: "x.example", back: "https://evil.example/" })).headers.get("location")).toBe(`${ROOT}/stats#blocks`);
+    const stats = await get("/stats");
+    expect(stats).toContain("newsletters from</span> mail.shop.example");
+    // Without a session nothing is blocked.
+    const anon = await SELF.fetch(`${BASE}/blocks`, { method: "POST", redirect: "manual", body: new URLSearchParams({ kind: "sender", value: "y.example" }) });
+    expect(anon.status).toBe(303);
+    expect((await apiJson("/api/blocks")).body.blocks.map((b: any) => b.value).sort()).toEqual(["mail.shop.example", "x.example"]);
+    const bid = (await apiJson("/api/blocks")).body.blocks[0].id;
+    expect((await SELF.fetch(`${BASE}/blocks/${bid}/delete`, { method: "POST", redirect: "manual", headers: { cookie } })).status).toBe(303);
+    expect((await apiJson("/api/blocks")).body.blocks).toHaveLength(1);
+  });
+});
+
 describe("domain stats", () => {
   it("counts mail per recipient domain from a running tally and lists set-up domains with no mail", async () => {
     await deliver(plain("a"), { to: "x@One.example" });

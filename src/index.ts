@@ -12,6 +12,7 @@ import {
   dailyCounts,
   domainCounts,
   domainDays,
+  newsletterCount,
   nextCursor,
   overview,
   recentTop,
@@ -22,7 +23,8 @@ import {
 } from "./store";
 import { FAVICON_SVG, inboxPage, loginPage, messagePage, statsPage, UI_JS, uiCsp } from "./ui";
 import { bodyCsp, findCid, outerCsp, parseFull, renderBodyHtml, renderViewPage } from "./view";
-import { errorJson, intVar, json, listVar, parseTime, toHex } from "./util";
+import { errorJson, escapeHtml as e, intVar, json, listVar, parseTime, toHex } from "./util";
+import { addBlock, countBlocks, listBlocks, MAX_BLOCKS, parseBlock, removeBlock } from "./bulk";
 import { themeAttrs } from "./theme";
 import { VERSION } from "./version";
 
@@ -95,10 +97,13 @@ function listQuery(p: URLSearchParams, defaults: { limit: number; order: "asc" |
   if (to && toPrefix) return "use to or to_prefix, not both";
   const toDomain = p.get("to_domain")?.trim().toLowerCase() || undefined;
   if (toDomain && !TO_DOMAIN_RE.test(toDomain)) return "to_domain wants a domain name";
+  const newsletters = p.get("newsletters") || undefined;
+  if (newsletters && newsletters !== "hide" && newsletters !== "only") return "newsletters is hide or only";
   return {
     to,
     toPrefix,
     toDomain,
+    newsletters: newsletters as "hide" | "only" | undefined,
     subject: p.get("subject") || undefined,
     q: p.get("q") || undefined,
     fromDomain: p.get("from_domain")?.trim() || undefined,
@@ -243,6 +248,7 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
     const q = listQuery(p, { limit: 1, order: "desc" });
     if (typeof q === "string") return errorJson(400, q);
     if (!q.to && !q.toPrefix && !q.toDomain && !q.subject && !q.q) return errorJson(400, "wait needs to, to_prefix, to_domain, subject or q");
+    q.newsletters = undefined; // a wait never hides anything
     q.since ??= Date.now();
     const found = await waitFor(env, q, intVar(p.get("timeout") ?? undefined, 30, 1, WAIT_MAX_SECONDS), req.signal);
     if (!found) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
@@ -278,6 +284,9 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
       parse_pending: o.pending,
       // Big mail not parsed yet: parsed when read, or in the background with CRON_PARSE_DEFERRED.
       parse_deferred: o.deferred,
+      // Newsletters stored now (hidden by newsletters=hide), and mail rejected by blocks, ever.
+      newsletters: o.newsletters,
+      blocked: o.blocked,
       parse_failed: o.failed,
       // Mail that arrived but could not be stored. Non-zero means mail was lost.
       store_failures: o.storeFailures,
@@ -290,6 +299,23 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
         domain_days: perDomain,
       }),
     });
+  }
+
+  // /api/blocks: senders, addresses and address families whose mail is rejected at arrival.
+  if (parts[1] === "blocks") {
+    if (parts.length === 2 && req.method === "GET") return json({ blocks: await listBlocks(env.DB) });
+    if (parts.length === 2 && req.method === "POST") {
+      const b = parseBlock(await req.json().catch(() => null));
+      if (typeof b === "string") return errorJson(400, b);
+      if ((await countBlocks(env.DB)) >= MAX_BLOCKS) return errorJson(400, `at most ${MAX_BLOCKS} blocks`);
+      const { block, created } = await addBlock(env.DB, b);
+      return json(block, created ? 201 : 200);
+    }
+    if (parts.length === 3 && req.method === "DELETE") {
+      const id = /^\d{1,12}$/.test(parts[2]!) ? Number(parts[2]) : 0;
+      return id && (await removeBlock(env.DB, id)) ? json({ ok: true }) : errorJson(404, "not found");
+    }
+    return errorJson(405, "method not allowed");
   }
 
   // /api/emails/:id[/raw|/view-link|/attachments/:n]
@@ -453,13 +479,41 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
   if (parts[0] === "logout" && req.method === "POST") return redirect(`${c.root}/login`, { "set-cookie": clearSession() });
   if (!(await hasSession(req, env))) return redirect(`${c.root}/login`);
 
+  // Block forms (message page) and Unblock (stats page). The session cookie is SameSite=Strict, and
+  // the Origin header must be ours too.
+  if (parts[0] === "blocks" && req.method === "POST") {
+    const origin = req.headers.get("origin");
+    if (origin && origin !== c.origin) return html(c, "Forbidden", 403);
+    if (parts.length === 1) {
+      const form = await req.formData().catch(() => null);
+      const b = parseBlock({ kind: form?.get("kind"), value: form?.get("value"), scope: form?.get("scope") || undefined });
+      if (typeof b === "string") return html(c, e(b), 400);
+      if ((await countBlocks(env.DB)) >= MAX_BLOCKS) return html(c, `At most ${MAX_BLOCKS} blocks.`, 400);
+      await addBlock(env.DB, b);
+      const back = form?.get("back");
+      return redirect(typeof back === "string" && back.startsWith(`${c.root}/`) && !back.includes("//", 1) ? back : `${c.root}/stats#blocks`);
+    }
+    if (parts.length === 3 && parts[2] === "delete" && /^\d{1,12}$/.test(parts[1]!)) {
+      await removeBlock(env.DB, Number(parts[1]));
+      return redirect(`${c.root}/stats#blocks`);
+    }
+    return html(c, "Not found", 404);
+  }
+
   if (parts[0] === "stats" && parts.length === 1) {
-    const [o, days, top, domains] = await Promise.all([overview(env.DB), dailyCounts(env.DB, 30), recentTop(env.DB), domainCounts(env.DB, 30)]);
+    const [o, days, top, domains, blocks] = await Promise.all([
+      overview(env.DB),
+      dailyCounts(env.DB, 30),
+      recentTop(env.DB),
+      domainCounts(env.DB, 30),
+      listBlocks(env.DB),
+    ]);
     return html(c, statsPage(c.root, {
       overview: o,
       days,
       top,
       domains,
+      blocks,
       setUp: listVar(env.DOMAINS),
       maxStoreBytes: intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024,
       retentionDays: intVar(env.RETENTION_DAYS, 30, 0),
@@ -470,8 +524,12 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
     const p = url.searchParams;
     const before = parseTime(p.get("before"));
     const cursor = parseCursor(p.get("cursor"));
+    const to = p.get("to")?.trim() || undefined;
+    // Newsletters are hidden unless asked for; a list for one address shows everything.
+    const nl = to ? "all" : p.get("newsletters") === "show" ? "shown" : "hidden";
     const rows = await listFresh(env, {
-      to: p.get("to")?.trim() || undefined,
+      to,
+      newsletters: nl === "hidden" ? "hide" : undefined,
       q: p.get("q") || undefined,
       before: before ?? undefined,
       cursor: cursor ?? undefined,
@@ -479,7 +537,11 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
       withText: false,
       order: "desc",
     });
-    return html(c, inboxPage(c.root, rows, { to: p.get("to") ?? "", q: p.get("q") ?? "", paged: Boolean(cursor || before), next: nextCursor(rows, INBOX_PAGE) }));
+    const hiddenCount = nl === "hidden" ? await newsletterCount(env.DB) : 0;
+    return html(
+      c,
+      inboxPage(c.root, rows, { to: p.get("to") ?? "", q: p.get("q") ?? "", paged: Boolean(cursor || before), next: nextCursor(rows, INBOX_PAGE), newsletters: nl, hiddenCount }),
+    );
   }
   const id = parts[1]!;
   if (!ID_RE.test(id)) return html(c, "Not found", 404);
@@ -525,7 +587,7 @@ export default {
       if (route === "health") return withHeaders(json({ ok: true, version: VERSION }));
       if (route === "favicon.svg") return withHeaders(asset(FAVICON_SVG, "image/svg+xml"));
       if (route === "ui.js") return withHeaders(asset(UI_JS, "text/javascript; charset=utf-8"));
-      if (parts[0] === "inbox" || parts[0] === "stats" || parts[0] === "login" || parts[0] === "logout") {
+      if (parts[0] === "inbox" || parts[0] === "stats" || parts[0] === "login" || parts[0] === "logout" || parts[0] === "blocks") {
         return withHeaders(await ui(req, env, url, parts, c), { "x-frame-options": "DENY" });
       }
       return withHeaders(errorJson(404, "not found"));
@@ -544,7 +606,13 @@ export default {
     const parsed = await parsePending(env, CRON_PARSE_BYTES, CRON_PARSE_MAX, env.CRON_PARSE_DEFERRED === "1");
     if (parsed) console.log(JSON.stringify({ event: "parsed", count: parsed }));
     if (new Date(controller.scheduledTime).getUTCMinutes() === 17) {
-      const result = await enforceRetention(env.DB, intVar(env.RETENTION_DAYS, 30, 0), intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024);
+      const result = await enforceRetention(
+        env.DB,
+        intVar(env.RETENTION_DAYS, 30, 0),
+        intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024,
+        Date.now(),
+        intVar(env.NEWSLETTER_RETENTION_DAYS, 0, 0),
+      );
       console.log(JSON.stringify({ event: "retention", ...result }));
     }
   },

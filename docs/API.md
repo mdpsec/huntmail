@@ -4,7 +4,7 @@ Base URL (`HUNTMAIL_URL`): `https://<worker-name>.<your-subdomain>.workers.dev/<
 
 **User-Agent:** Cloudflare's edge rejects Python's default `Python-urllib/x.y` User-Agent on `workers.dev` hosts with `error code: 1010` before the request reaches the Worker. Set any User-Agent header when using `urllib`. curl, wget, requests, httpx, aiohttp, Node and Go clients work as-is.
 
-`GET /health` needs no key and returns `{"ok": true, "version": "1.2.0"}` (the running HuntMail version).
+`GET /health` needs no key and returns `{"ok": true, "version": "1.3.0"}` (the running HuntMail version).
 
 All `/api/*` routes need the key, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Responses are JSON unless noted. Times are ISO 8601 UTC. `since` and `before` also accept unix seconds or milliseconds.
 
@@ -50,6 +50,8 @@ Anyone on the internet can send mail to any address on your domain, and can forg
 - `links`: http(s) links from the HTML, then the plain text, in order, de-duplicated, entities decoded. Only links a reader can click: stylesheet and font `<link>` tags are skipped.
 - `link_details`: the same links, each with the `text` a reader sees (for image buttons, the image's alt text; `""` for links found in plain text). Use it to pick the right link, e.g. the one whose text says "Reset password" rather than "Unsubscribe". The text is written by the sender and can be anything; opening a link counts as a click and may use up a one-time token.
 - `action`: the link the mail is about, or `null`: `kind` is `Verify` (verify or confirm an address, activate an account), `Reset` (password reset), `Sign in` (magic link) or `Invite`, with its `url` and `text`. Picked from `link_details` by the link text first (unless the text is itself an address), then by words at the start of a path segment in the address (never the query); unsubscribe, preferences, social and help links never count. A best guess from sender-controlled links: check it before an agent opens it.
+- `newsletter`: `true` for a newsletter (see "Newsletters and blocks"). `false` until the message is parsed.
+- `sender_domain`: the From header's domain, lowercased (`""` without one). The value to send for a sender block.
 - `auth`: the verdicts Cloudflare's MX recorded on arrival (`pass`, `fail`, `none`, ...). Only Cloudflare's own `Authentication-Results` header is read; copies further down the message are ignored, since a sender can write those. The parse fails closed: if the header could have been shaped by the sender (an envelope sender with quotes, brackets or `;`, quotes or unbalanced comments in the header, or more DKIM passes than DKIM signatures), all verdicts read `none`. `verified_domains` lists domains with a passing DKIM signature, plus the From domain when DMARC passed. `spam_score` is Cloudflare's score when present.
 - `raw_truncated`: the message was larger than `MAX_MESSAGE_KB`; the stored raw is the first part of it. `raw_size` is the original size.
 - `parse_status`: `ok`; `partial` (only the first `PARSE_BYTES` were parsed: text, codes and links can miss content late in very large mail); `pending` (not parsed yet, see below); `deferred` (over 64 KB, parsed when read, see below); `failed` (could not be parsed; raw is kept).
@@ -96,6 +98,7 @@ Search: `{"emails": [...], "next_cursor": "..."}`, the newest `limit` matches. F
 | `to`, `to_prefix`, `to_domain`, `subject`, `q`, `from_domain`, `since`, `before` | filters, as above |
 | `limit` | default 20, max 200 |
 | `cursor` | `next_cursor` from the previous page |
+| `newsletters` | `hide` leaves newsletters out, `only` lists just them (see "Newsletters and blocks"); default: everything. Works with every other filter and with cursor paging. `/api/wait` ignores it |
 | `text` | `0` omits `text` |
 | `order` | `desc` (default, newest first) or `asc` (the same newest matches, newest last) |
 
@@ -127,9 +130,27 @@ npx playwright screenshot --full-page "$LINK" email.png
 
 ### `GET /api/stats`
 
-`version` (the running HuntMail version), message count, stored bytes and cap, retention, oldest and newest, parse backlog (`parse_pending`, which excludes deferred big mail; `parse_deferred`, big mail not parsed yet; and `parse_failed`), and `store_failures` / `last_store_failure`: mail that arrived but could not be stored. `domains` lists mail per recipient domain over the last 30 UTC days (`domain`, `received`, `today`), most first; `domains_set_up` is the `DOMAINS` setting. A non-zero `store_failures` means mail was lost.
+`version` (the running HuntMail version), message count, stored bytes and cap, retention, oldest and newest, parse backlog (`parse_pending`, which excludes deferred big mail; `parse_deferred`, big mail not parsed yet; and `parse_failed`), and `store_failures` / `last_store_failure`: mail that arrived but could not be stored. `domains` lists mail per recipient domain over the last 30 UTC days (`domain`, `received`, `today`), most first; `domains_set_up` is the `DOMAINS` setting. `newsletters` is how many newsletters are stored now, `blocked` how many messages blocks have rejected so far. A non-zero `store_failures` means mail was lost.
 
 `?days=N` (1 to 400) adds `days`, mail per UTC day for the last N days, oldest first with today last, zero-filled (`day`, `received`, `raw_bytes`), and `domain_days`, mail per recipient domain per day over the same days (`day`, `domain`, `received`; days with mail only, by day then domain). Without it the response has neither.
+
+## Newsletters and blocks
+
+A message is a **newsletter** when all of these hold: it has newsletter headers (`List-Unsubscribe`, `List-Id`, or `Precedence: bulk`), it has been parsed, it has no code and no `action` link, and its subject does not look like account mail (verify, confirm, password, code, sign in, security, welcome, invite, account, new device and the like, in English and the common European and East Asian languages). Many sites send their sign-up and reset mail through the same mailing services as their newsletters, so the headers alone never decide. Newsletters are kept, not deleted: the inbox hides them by default (a list filtered to one address shows everything), `newsletters=hide` leaves them out of a list, the size cap evicts them first, and `NEWSLETTER_RETENTION_DAYS` can keep them for fewer days than other mail.
+
+A **block** rejects mail at arrival: it is never stored or forwarded, and the sender gets a bounce, which makes mailing lists drop the address. Block from a message's page in the inbox, or through the API:
+
+| Route | |
+|---|---|
+| `GET /api/blocks` | `{"blocks": [{id, kind, value, scope, created_at, hits, last_hit}]}` |
+| `POST /api/blocks` | JSON `{kind, value, scope}`. `201` with the block, or `200` with the existing one for the same `kind` and `value` (its `scope` updated) |
+| `DELETE /api/blocks/:id` | `{"ok": true}`, or `404` |
+
+- `kind: "sender"`, `value`: a domain. Matches the From header's domain and its subdomains (`shop.example` covers `news.shop.example`). `scope: "newsletters"` (the default) rejects only mail with newsletter headers whose subject does not look like account mail, so the site's own verify and reset mail still arrives; `scope: "all"` rejects everything from it.
+- `kind: "recipient"`, `value`: one address. Everything to it is rejected.
+- `kind: "prefix"`, `value`: addresses starting with it, with the same rules as `to_prefix` (`acme-` retires every `acme-...@` address). Everything to them is rejected.
+
+At most 1000 blocks. Each arrival costs one extra database read to check them.
 
 ## Rendered view: `<base>/view/:id?t=...`
 
@@ -139,7 +160,7 @@ From `view-link`. A small page we generate: From, Sender (the envelope sender), 
 
 ## Inbox UI
 
-`<base>/inbox`, after logging in at `<base>/login` with the API key. List (50 per page, newest first; click a row to open it) with a Code/link column (the likeliest code, else the `action` link: click to copy, the arrow opens it), filter by recipient or text, message detail with codes (click one to copy it), links, attachments, sender checks, raw download and the rendered mail. The **Theme** menu (top right) picks light, dark or the system's setting, and the colours: Midnight (the default), Nord or Graphite. The choice is kept in a cookie (`hm-theme`) in that browser. The rendered view keeps its own light header, so screenshots look the same whoever takes them.
+`<base>/inbox`, after logging in at `<base>/login` with the API key. List (50 per page, newest first; click a row to open it; newsletters hidden unless you click Show) with a Code/link column (the likeliest code, else the `action` link: click to copy, the arrow opens it), filter by recipient or text, message detail with codes (click one to copy it), links, attachments, sender checks, raw download and the rendered mail. The **Theme** menu (top right) picks light, dark or the system's setting, and the colours: Midnight (the default), Nord or Graphite. The choice is kept in a cookie (`hm-theme`) in that browser. The rendered view keeps its own light header, so screenshots look the same whoever takes them.
 
 ## Simple list: `GET <base>/emails`
 

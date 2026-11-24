@@ -5,6 +5,28 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.3.0 (2026-11-24)
+
+- Newsletters: `newsletter` on every message (newsletter headers, parsed, no
+  code, no action link, no account-style subject); `newsletters=hide|only` on
+  lists; hidden in the inbox by default; evicted first by the size cap;
+  `NEWSLETTER_RETENTION_DAYS` to keep them for fewer days. `/api/stats` reports
+  `newsletters` and `blocked`.
+- Blocks: reject mail at arrival from a sender domain (its newsletters, or
+  everything), to one address, or to an address family. `/api/blocks`, and
+  buttons on the inbox's message page; blocks are listed on the stats page.
+- Migration 0009: `bulk` and `has_action` columns, a newsletter index, the
+  `blocks` table. Mail stored before it never counts as a newsletter.
+- `sender_domain` on every message: the From header's domain, the value a
+  sender block takes.
+- `action`: `Reset` also matches `password/change`, `password-forgot` and
+  `forgot-password` addresses.
+
+Upgrading: `git pull`, then `pnpm redeploy` (or re-run `scripts/setup.sh`), which
+applies migration 0009 before deploying. Mail already stored is never marked as a
+newsletter; new mail is. Optionally set `NEWSLETTER_RETENTION_DAYS` (for example
+`"7"`) in `wrangler.local.jsonc`.
+
 ## v1.2.0 (2026-11-24)
 
 - `action` on every message: the link the mail is about (`Verify`, `Reset`,

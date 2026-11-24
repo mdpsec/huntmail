@@ -1,5 +1,6 @@
 import type { DayCount, DomainCount, MessageOut, Overview, TopEntry } from "./store";
 import type { ActionLink } from "./action";
+import { type Block, fromDomain } from "./bulk";
 import { MENU_CSS, MENU_JS, THEME_CSS, themeMenu } from "./theme";
 import { escapeHtml as e } from "./util";
 
@@ -78,6 +79,11 @@ document.addEventListener("auxclick", function (e) {
   var row = rowFor(e);
   if (row) { e.preventDefault(); window.open(row.getAttribute("data-href"), "_blank", "noopener"); }
 });
+document.addEventListener("submit", function (e) {
+  var f = e.target;
+  var msg = f && f.getAttribute && f.getAttribute("data-confirm");
+  if (msg && !window.confirm(msg)) e.preventDefault();
+});
 ${MENU_JS}`;
 
 /** The mail's action link: its kind copies the link (paste it into the browser you test with); the arrow opens it. */
@@ -90,6 +96,24 @@ function actionChip(a: ActionLink): string {
 function codeOrAction(m: MessageOut): string {
   if (m.codes[0]) return codeChip(m.codes[0]) + (m.codes.length > 1 ? `<span class="mut" title="${e(m.codes.slice(1).join(", "))}">+${m.codes.length - 1}</span>` : "");
   return m.action ? actionChip(m.action) : `<span class="mut">–</span>`;
+}
+
+function blockForm(root: string, back: string, kind: string, value: string, scope: string, label: string, confirm: string): string {
+  return `<form class="blockf" method="post" action="${root}/blocks" data-confirm="${e(confirm)}"><input type="hidden" name="kind" value="${e(kind)}"><input type="hidden" name="value" value="${e(value)}"><input type="hidden" name="scope" value="${e(scope)}"><input type="hidden" name="back" value="${e(back)}"><button>${e(label)}</button></form>`;
+}
+
+/** Block buttons on a message: newsletters from its sender's domain, or everything to its address. */
+function blockButtons(root: string, m: MessageOut): string {
+  const back = `${root}/inbox/${m.id}`;
+  const domain = fromDomain(m.header_from);
+  return (
+    (domain
+      ? blockForm(root, back, "sender", domain, "newsletters", `Block newsletters from ${domain}`,
+          `Reject newsletters from ${domain} and its subdomains from now on? Mail with a code-like or account subject still arrives.`) + " "
+      : "") +
+    blockForm(root, back, "recipient", m.to, "all", "Block this address", `Reject all mail to ${m.to} from now on?`) +
+    ` <span class="mut" style="font-size:12px">Blocked mail bounces and is never stored. <a href="${root}/stats#blocks">Blocks</a></span>`
+  );
 }
 
 /** A one-time code as a button that copies itself. */
@@ -156,6 +180,8 @@ dt{color:var(--mut)}dd{margin:0;word-break:break-word;min-width:0}
 .lk{display:flex;gap:10px;padding:3px 6px;margin:0 -6px;border-radius:5px;cursor:copy}.lk:hover{background:var(--row)}
 .lk b{flex:0 0 auto;max-width:40%;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lk span{word-break:break-all;color:var(--mut)}
 .lk.copied{background:var(--good);color:var(--ongood)}.lk.copied span{color:var(--ongood)}
+.nltog{margin-left:auto;font-size:13px}
+.blockf{display:inline}.blockf button{font-size:12.5px;padding:4px 9px}
 .tools{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)}
 .tools .mut{margin-left:auto;font-size:12px}
 iframe{display:block;width:100%;height:78vh;border:0;background:#fff}
@@ -218,26 +244,42 @@ function recipient(m: MessageOut): string {
   return `${e(m.to)}${original ? `<span class="sub" title="To header">${e(original)}</span>` : ""}`;
 }
 
-export function inboxPage(root: string, rows: MessageOut[], f: { to: string; q: string; paged: boolean; next: string | null }): string {
+/**
+ * `newsletters`: "hidden" (the default view; `hiddenCount` of them stored), "shown" (?newsletters=show),
+ * or "all" (filtered to one address: a mailbox shows everything).
+ */
+export function inboxPage(
+  root: string,
+  rows: MessageOut[],
+  f: { to: string; q: string; paged: boolean; next: string | null; newsletters?: "hidden" | "shown" | "all"; hiddenCount?: number },
+): string {
   const list = rows.length
     ? rows
         .map(
           (m) => `<tr data-href="${root}/inbox/${e(m.id)}"><td class="t" title="${e(fmtTime(m.received_at))} UTC">${e(shortTime(m.received_at))}</td><td class="hide-sm">${recipient(m)}</td><td class="hide-sm">${sender(m)}</td>
-<td class="s"><a href="${root}/inbox/${e(m.id)}">${e(m.subject || "(no subject)")}</a></td><td class="cl">${codeOrAction(m)}</td></tr>`,
+<td class="s"><a href="${root}/inbox/${e(m.id)}">${e(m.subject || "(no subject)")}</a>${m.newsletter ? `<span class="tag" title="Unsubscribe headers, no code and no action link">newsletter</span>` : ""}</td><td class="cl">${codeOrAction(m)}</td></tr>`,
         )
         .join("")
     : "";
-  const qs = new URLSearchParams({ ...(f.to ? { to: f.to } : {}), ...(f.q ? { q: f.q } : {}) });
+  const nl = f.newsletters ?? "all";
+  const qs = new URLSearchParams({ ...(f.to ? { to: f.to } : {}), ...(f.q ? { q: f.q } : {}), ...(nl === "shown" ? { newsletters: "show" } : {}) });
+  const base = new URLSearchParams({ ...(f.to ? { to: f.to } : {}), ...(f.q ? { q: f.q } : {}) });
+  const toggle =
+    nl === "hidden"
+      ? `<span class="mut nltog">${f.hiddenCount ? `${f.hiddenCount.toLocaleString("en-US")} newsletter${f.hiddenCount === 1 ? "" : "s"} hidden` : "Newsletters hidden"} · <a href="${root}/inbox?${new URLSearchParams({ ...Object.fromEntries(base), newsletters: "show" }).toString()}">Show</a></span>`
+      : nl === "shown"
+        ? `<span class="mut nltog"><a href="${root}/inbox${base.toString() ? "?" + base.toString() : ""}">Hide newsletters</a></span>`
+        : "";
   const filtered = Boolean(f.to || f.q);
   return page(
     root,
     "Inbox",
-    `<div class="head"><h1>Inbox</h1><span class="mut">${rows.length ? `${f.paged ? "older · " : ""}${rows.length}${f.next ? "+" : ""} message${rows.length === 1 ? "" : "s"}` : ""}${filtered ? " matching" : ""}</span></div>
+    `<div class="head"><h1>Inbox</h1><span class="mut">${rows.length ? `${f.paged ? "older · " : ""}${rows.length}${f.next ? "+" : ""} message${rows.length === 1 ? "" : "s"}` : ""}${filtered ? " matching" : ""}</span>${toggle}</div>
 <div class="card">
 <form class="bar" method="get" action="${root}/inbox">
 <input name="to" placeholder="Exact recipient" value="${e(f.to)}" style="flex:1 1 240px">
 <input name="q" placeholder="Subject or sender contains" value="${e(f.q)}" style="flex:1 1 220px">
-<button>Filter</button>${filtered ? `<a href="${root}/inbox">Clear</a>` : ""}</form>
+${nl === "shown" ? `<input type="hidden" name="newsletters" value="show">` : ""}<button>Filter</button>${filtered ? `<a href="${root}/inbox">Clear</a>` : ""}</form>
 ${
   rows.length
     ? `<table><colgroup><col style="width:136px"><col class="hide-sm" style="width:24%"><col class="hide-sm" style="width:21%"><col><col style="width:150px"></colgroup>
@@ -280,6 +322,7 @@ ${m.action ? `<dt>Action link</dt><dd>${actionChip(m.action)} <span class="mut">
 <dt>Links</dt><dd>${links}${m.links.length ? `<div class="mut" style="font-size:12px;margin-top:4px">Click a link to copy it. Link text is set by the sender and can differ from where the link goes.</div>` : ""}</dd>
 <dt>Attachments</dt><dd>${atts}</dd>
 <dt>Sender checks</dt><dd>${authLine(m)}</dd>
+<dt>Block</dt><dd>${blockButtons(root, m)}</dd>
 </dl></div>
 <div class="card"><div class="tools"><a href="${e(viewUrl)}" target="_blank" rel="noopener noreferrer">Open full page</a><a href="${e(viewUrlImages)}" target="_blank" rel="noopener noreferrer">Open with remote images</a><a href="${root}/inbox/${e(m.id)}/raw">Download .eml</a><span class="mut">${m.raw_size.toLocaleString("en-US")} bytes${m.raw_truncated ? " · stored truncated" : ""}${status}</span></div>
 <iframe src="${e(bodyUrl)}" sandbox="" referrerpolicy="no-referrer" title="message"></iframe></div>`,
@@ -399,6 +442,23 @@ export interface StatsData {
   maxStoreBytes: number;
   retentionDays: number;
   top: { sample: number; recipients: TopEntry[]; senders: TopEntry[] };
+  blocks: Block[];
+}
+
+function blocksTable(root: string, blocks: Block[], blocked: number, newsletters: number): string {
+  const what = (b: Block) =>
+    b.kind === "sender" ? (b.scope === "all" ? "all mail from" : "newsletters from") : b.kind === "recipient" ? "all mail to" : "all mail to addresses starting";
+  const rows = blocks
+    .map(
+      (b) =>
+        `<tr><td><span class="mut">${what(b)}</span> ${e(b.value)}</td><td class="r">${b.hits.toLocaleString("en-US")}</td><td class="hide-sm">${b.last_hit ? e(shortTime(b.last_hit)) + " UTC" : `<span class="mut">never</span>`}</td><td class="r"><form class="blockf" method="post" action="${root}/blocks/${b.id}/delete"><button>Unblock</button></form></td></tr>`,
+    )
+    .join("");
+  return `<div class="card" id="blocks" style="margin-top:16px"><h2>Blocks</h2><p class="mut" style="margin:4px 18px 8px;font-size:12.5px">${blocked.toLocaleString("en-US")} message${blocked === 1 ? "" : "s"} rejected so far. ${newsletters.toLocaleString("en-US")} newsletter${newsletters === 1 ? "" : "s"} stored (hidden in the inbox). Block a sender or an address from a message's page.</p>${
+    blocks.length
+      ? `<table class="num"><colgroup><col><col style="width:90px"><col class="hide-sm" style="width:150px"><col style="width:110px"></colgroup><thead><tr><th>Rejected</th><th class="r">Hits</th><th class="hide-sm">Last</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<div class="empty" style="padding:16px">No blocks.</div>`
+  }</div>`;
 }
 
 export function statsPage(root: string, s: StatsData): string {
@@ -436,6 +496,7 @@ export function statsPage(root: string, s: StatsData): string {
 <div class="card"><div class="chart"><h2>Emails per day, last ${s.days.length} days (UTC)</h2>${dayChart(s.days)}</div>${table}</div>
 ${domainTable(s.domains, s.setUp, s.days.length)}
 <div class="cols" style="margin-top:16px">${topTable(`Top recipients, newest ${s.top.sample} emails`, s.top.recipients)}${topTable(`Top sender domains, newest ${s.top.sample} emails`, s.top.senders)}</div>
+${blocksTable(root, s.blocks, o.blocked, o.newsletters)}
 <p class="mut" style="font-size:12px;margin-top:14px">Daily counts are kept for a year, even after old mail is removed by retention (${s.retentionDays} days) or the size cap.</p>`,
     true,
     "stats",

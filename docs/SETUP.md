@@ -76,6 +76,7 @@ If mail from one sender never shows up and nothing is logged: Email Routing reje
 | `PARSE_BYTES` | `262144` | Leading bytes of each message parsed for text, codes and links. |
 | `GZIP_MAX_BYTES` | `131072` | Larger messages are stored uncompressed. |
 | `TO_READ_PARSE_MAX` | `1` | Unparsed messages a per-address read (`to=`) parses before answering. `1` keeps a read inside the free plan's 10 ms CPU. On Paid use `25`, so a mailbox listing never shows an empty body. |
+| `NEWSLETTER_RETENTION_DAYS` | `0` | Days to keep newsletters when fewer than `RETENTION_DAYS` (see the API's "Newsletters and blocks"). `0`: the same as `RETENTION_DAYS`. |
 | `CRON_PARSE_DEFERRED` | `0` | `1`: the per-minute run also parses big mail (over 64 KB), newest first, so lists show its codes without a read. Leave `0` on the free plan (a big parse can pass 10 ms of CPU); on Paid use `1`. |
 
 Rotate the key: `HUNTMAIL_API_KEY=$(openssl rand -hex 32) ./scripts/setup.sh --domain yourdomain.com`. Old view links and sessions stop working. Keys under 32 characters are refused.

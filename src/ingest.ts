@@ -13,6 +13,8 @@ import PostalMime, { addressParser, decodeWords } from "postal-mime";
 import type { Address, Email } from "postal-mime";
 import { extractCodes, extractLinkDetails, htmlToText, type LinkDetail } from "./extract";
 import { authVerdicts } from "./authresults";
+import { actionLink } from "./action";
+import { isBulk, matchBlock, noteBlockHit } from "./bulk";
 import { arrivalReserve, evictForSpace, insertMessage, loadRaw, META_RESERVE, noteStoreFailure, storedBytes, TEXT_RESERVE_MAX, utf8Bytes, type AttachmentMeta } from "./store";
 import { gzip, intVar, newId } from "./util";
 
@@ -177,12 +179,30 @@ export async function summarizeBody(raw: Uint8Array, parseBytes: number): Promis
 
 /** Phase 1. Runs inside email(). */
 export async function handleEmail(message: ForwardableEmailMessage, env: Env): Promise<void> {
+  const now = Date.now();
+  const h = summarizeHeaders(message.headers);
+  const envelopeTo = message.to.toLowerCase().slice(0, MAX_ENVELOPE_CHARS);
+  const bulk = isBulk(message.headers, h.subject);
+
+  // Blocks first: blocked mail is rejected before it is read, and never stored or forwarded. The
+  // bounce tells the sender the address is gone, so mailing lists drop it. A failed check stores
+  // the mail as usual.
+  try {
+    const block = await matchBlock(env.DB, { to: envelopeTo, headerFrom: h.headerFrom, bulk });
+    if (block) {
+      message.setReject("This address does not accept this mail");
+      await noteBlockHit(env.DB, block.id, now).catch(() => {});
+      console.log(JSON.stringify({ event: "blocked", block: block.id }));
+      return;
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ event: "block_check_failed", error: String(err) }));
+  }
+
   // Native buffering; avoids a JS read loop and concat.
   const full = new Uint8Array(await new Response(message.raw).arrayBuffer());
   const maxMessage = intVar(env.MAX_MESSAGE_KB, DEFAULT_MAX_MESSAGE_KB, 64, 25 * 1024) * 1024;
   const raw = full.byteLength > maxMessage ? full.subarray(0, maxMessage) : full;
-  const now = Date.now();
-  const h = summarizeHeaders(message.headers);
   const gzipMax = intVar(env.GZIP_MAX_BYTES, DEFAULT_GZIP_MAX_BYTES, 0, 25 * 1024 * 1024);
   const compress = raw.byteLength <= gzipMax;
   const stored = compress ? gzip(raw) : raw;
@@ -200,7 +220,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env): P
     await insertMessage(env.DB, {
       id,
       receivedAt: now,
-      envelopeTo: message.to.toLowerCase().slice(0, MAX_ENVELOPE_CHARS),
+      envelopeTo,
       envelopeFrom: clean(message.from, MAX_ENVELOPE_CHARS),
       ...h,
       // Codes come from the parse step (subject and body together); none at arrival.
@@ -210,6 +230,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env): P
       rawTruncated: raw !== full,
       stored,
       compressed: compress,
+      bulk,
     });
     console.log(JSON.stringify({ event: "stored", id, raw_size: full.byteLength, stored_size: stored.byteLength }));
   } catch (err) {
@@ -281,10 +302,11 @@ export async function parseMessage(env: Env, id: string, opts: { firstAttemptOnl
        codes = ?4,
        header_from = CASE WHEN ?11 = '' THEN header_from ELSE ?11 END,
        header_to = CASE WHEN ?12 = '' THEN header_to ELSE ?12 END,
-       subject = CASE WHEN ?13 = '' THEN subject ELSE ?13 END
+       subject = CASE WHEN ?13 = '' THEN subject ELSE ?13 END,
+       has_action = ?14
      WHERE id = ?1`,
   )
-    .bind(id, b.text, b.hasHtml ? 1 : 0, codes, links, attachments, b.parseStatus, parsedBytes, TEXT_RESERVE_MAX, META_RESERVE, h?.from ?? "", h?.to ?? "", h?.subject ?? "")
+    .bind(id, b.text, b.hasHtml ? 1 : 0, codes, links, attachments, b.parseStatus, parsedBytes, TEXT_RESERVE_MAX, META_RESERVE, h?.from ?? "", h?.to ?? "", h?.subject ?? "", actionLink(b.links) ? 1 : 0)
     .run();
   return true;
 }

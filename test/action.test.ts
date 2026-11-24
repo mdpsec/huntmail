@@ -20,6 +20,8 @@ describe("action link", () => {
   it("falls back to the address when no link text says, and kinds are tried in order", () => {
     expect(actionLink([L("https://a.example/account/verify?token=abc")])?.kind).toBe("Verify");
     expect(actionLink([L("https://a.example/password-reset/abc")])?.kind).toBe("Reset");
+    expect(actionLink([L("https://auth.a.example/password/change/2_wB72ifPT4B1phN", "Click here")])?.kind).toBe("Reset");
+    expect(actionLink([L("https://a.example/forgot-password?t=1")])?.kind).toBe("Reset");
     expect(actionLink([L("https://a.example/auth/magic-link?t=1")])?.kind).toBe("Sign in");
     expect(actionLink([L("https://a.example/invites/abc/")])?.kind).toBe("Invite");
     // Verify comes before Reset, and text before address within a kind.

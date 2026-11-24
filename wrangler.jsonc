@@ -44,7 +44,10 @@
     // "1": the per-minute run also parses big mail (over 64 KB, otherwise parsed only when read),
     // newest first, so lists show its codes. Off on the free plan (a big parse can pass 10 ms);
     // on Paid use "1".
-    "CRON_PARSE_DEFERRED": "0"
+    "CRON_PARSE_DEFERRED": "0",
+    // Days to keep newsletters (mail with unsubscribe headers and no code or action link), when
+    // fewer than RETENTION_DAYS. "0": the same as RETENTION_DAYS.
+    "NEWSLETTER_RETENTION_DAYS": "0"
   }
   // Secret, set with `wrangler secret put API_KEY`: the read key for the API and inbox login.
 }

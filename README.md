@@ -17,6 +17,7 @@ curl -s -H "X-Api-Key: $HUNTMAIL_API_KEY" "$HUNTMAIL_URL/api/wait?to=acme-k7q2x@
 - **An API built for agents**: wait for mail in one request, extracted `codes`, links with their visible text, sender checks (SPF, DKIM, DMARC), search, the original `.eml` and attachments.
 - **Screenshot-ready view**: a signed link that opens in any browser without the key and shows the mail as a mail client would, locked down (no scripts, remote images only when asked for).
 - **A small inbox** for humans: each row shows its code or its verify/reset/sign-in link; click a row to open it, click a code or link to copy it. Light or dark, in three colour palettes.
+- **Newsletters out of the way**: sign-ups bring newsletters. HuntMail spots them (unsubscribe headers, and no code, no verify link, no account-style subject) and hides them; one click blocks a sender's newsletters or a whole address, and blocked mail bounces so lists drop you.
 - **Hidden by default**: everything lives under a random path, and the bare address is a 404.
 - **Free to run**: one Worker and one D1 database, with retention by age and size so the free database never fills.
 
