@@ -1,4 +1,5 @@
 import type { DayCount, DomainCount, MessageOut, Overview, TopEntry } from "./store";
+import type { ActionLink } from "./action";
 import { MENU_CSS, MENU_JS, THEME_CSS, themeMenu } from "./theme";
 import { escapeHtml as e } from "./util";
 
@@ -79,6 +80,18 @@ document.addEventListener("auxclick", function (e) {
 });
 ${MENU_JS}`;
 
+/** The mail's action link: its kind copies the link (paste it into the browser you test with); the arrow opens it. */
+function actionChip(a: ActionLink): string {
+  const tip = `${a.text ? a.text + "\n" : ""}${a.url}\nClick to copy. Opening it is a click on it: it can use it up.`;
+  return `<button type="button" class="chip act" data-copy="${e(a.url)}" title="${e(tip)}">${e(a.kind)}</button><a class="act-open" href="${e(a.url)}" target="_blank" rel="noopener noreferrer nofollow" title="Open in a new tab" aria-label="Open the ${e(a.kind)} link">↗</a>`;
+}
+
+/** The Code/link cell: the likeliest code, else the action link. */
+function codeOrAction(m: MessageOut): string {
+  if (m.codes[0]) return codeChip(m.codes[0]) + (m.codes.length > 1 ? `<span class="mut" title="${e(m.codes.slice(1).join(", "))}">+${m.codes.length - 1}</span>` : "");
+  return m.action ? actionChip(m.action) : `<span class="mut">–</span>`;
+}
+
 /** A one-time code as a button that copies itself. */
 function codeChip(code: string): string {
   return `<button type="button" class="chip code" data-copy="${e(code)}" title="Click to copy">${e(code)}</button>`;
@@ -130,6 +143,9 @@ td .sub{display:block;font-size:12px;color:var(--mut);overflow:hidden;text-overf
 td.s a{color:var(--fg);font-weight:500}
 .mut{color:var(--mut)}
 .chip{display:inline-block;background:var(--chip);color:var(--chipfg);border-radius:6px;padding:1px 8px;margin:0 6px 4px 0;font:600 13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.chip.act{border:0;cursor:copy;font-family:inherit;font-size:12.5px;margin-right:2px;transition:background .15s,color .15s}.chip.act:hover{filter:brightness(.94)}.chip.act.copied{background:var(--good);color:var(--ongood)}.chip.act.copied::after{content:" \\2713"}
+.act-open{display:inline-block;padding:0 4px;color:var(--mut);font-size:13px}.act-open:hover{color:var(--acc);text-decoration:none}
+td.cl{white-space:nowrap}td.cl .chip{margin-bottom:0}
 .chip.code{border:0;cursor:copy;transition:background .15s,color .15s}.chip.code:hover{filter:brightness(.94)}
 .chip.code.copied{background:var(--good);color:var(--ongood)}.chip.code.copied::after{content:" \\2713"}
 .empty{padding:40px 14px;text-align:center;color:var(--mut)}
@@ -207,7 +223,7 @@ export function inboxPage(root: string, rows: MessageOut[], f: { to: string; q: 
     ? rows
         .map(
           (m) => `<tr data-href="${root}/inbox/${e(m.id)}"><td class="t" title="${e(fmtTime(m.received_at))} UTC">${e(shortTime(m.received_at))}</td><td class="hide-sm">${recipient(m)}</td><td class="hide-sm">${sender(m)}</td>
-<td class="s"><a href="${root}/inbox/${e(m.id)}">${e(m.subject || "(no subject)")}</a>${m.codes[0] ? `<span class="sub">${codeChip(m.codes[0])}</span>` : ""}</td></tr>`,
+<td class="s"><a href="${root}/inbox/${e(m.id)}">${e(m.subject || "(no subject)")}</a></td><td class="cl">${codeOrAction(m)}</td></tr>`,
         )
         .join("")
     : "";
@@ -224,8 +240,8 @@ export function inboxPage(root: string, rows: MessageOut[], f: { to: string; q: 
 <button>Filter</button>${filtered ? `<a href="${root}/inbox">Clear</a>` : ""}</form>
 ${
   rows.length
-    ? `<table><colgroup><col style="width:136px"><col class="hide-sm" style="width:26%"><col class="hide-sm" style="width:24%"><col></colgroup>
-<thead><tr><th>Received</th><th class="hide-sm">To</th><th class="hide-sm">From</th><th>Subject</th></tr></thead><tbody>${list}</tbody></table>`
+    ? `<table><colgroup><col style="width:136px"><col class="hide-sm" style="width:24%"><col class="hide-sm" style="width:21%"><col><col style="width:150px"></colgroup>
+<thead><tr><th>Received</th><th class="hide-sm">To</th><th class="hide-sm">From</th><th>Subject</th><th title="The likeliest one-time code; without one, the link the mail is about (verify, reset, sign in, invite)">Code/link</th></tr></thead><tbody>${list}</tbody></table>`
     : `<div class="empty">${filtered ? "No mail matches." : "No mail yet. Send something to any address on your domain."}</div>`
 }
 ${f.next || f.paged ? `<div class="pager">${f.paged ? `<a href="${root}/inbox${qs.toString() ? "?" + qs.toString() : ""}">← Newest</a>` : ""}${f.next ? `<a href="${root}/inbox?${qs.toString() ? qs.toString() + "&" : ""}cursor=${e(f.next)}">Older →</a>` : ""}</div>` : ""}
@@ -260,6 +276,7 @@ export function messagePage(root: string, m: MessageOut, viewUrl: string, viewUr
 <dt>To</dt><dd>${e(m.to)}${m.header_to && m.header_to.toLowerCase() !== m.to ? ` <span class="mut">· header ${e(m.header_to)}</span>` : ""}</dd>
 <dt>Received</dt><dd>${e(fmtTime(m.received_at))} UTC</dd>
 <dt>Codes</dt><dd>${codes}${m.codes.length ? ` <span class="mut">click to copy</span>` : ""}</dd>
+${m.action ? `<dt>Action link</dt><dd>${actionChip(m.action)} <span class="mut">${e(m.action.text || m.action.url)}</span></dd>` : ""}
 <dt>Links</dt><dd>${links}${m.links.length ? `<div class="mut" style="font-size:12px;margin-top:4px">Click a link to copy it. Link text is set by the sender and can differ from where the link goes.</div>` : ""}</dd>
 <dt>Attachments</dt><dd>${atts}</dd>
 <dt>Sender checks</dt><dd>${authLine(m)}</dd>

@@ -74,6 +74,7 @@ them.
 | `src/ingest.ts` | `email()` arrival (store raw, sender checks) and the parse step |
 | `src/store.ts` | D1 queries, size accounting, retention and eviction, stats |
 | `src/extract.ts` | Codes, links and link text, HTML to text |
+| `src/action.ts` | The link a message is about (verify, reset, sign in, invite) |
 | `src/authresults.ts` | Sender verdicts from Cloudflare's Authentication-Results, fail-closed |
 | `src/view.ts` | Sandboxed render of a message, cid images |
 | `src/ui.ts` | Inbox, stats and login pages |

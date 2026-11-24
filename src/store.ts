@@ -1,3 +1,4 @@
+import { actionLink, type ActionLink } from "./action";
 import type { LinkDetail } from "./extract";
 import { concatBytes, gunzip } from "./util";
 
@@ -86,6 +87,8 @@ export interface MessageOut {
   links: string[];
   /** Each link with its visible text ("" for links found in plain text). */
   link_details: LinkDetail[];
+  /** The link the mail is about (verify, reset, sign in, invite), from link_details; null without one. */
+  action: ActionLink | null;
   attachments: AttachmentMeta[];
   auth: { spf: string; dkim: string; dmarc: string; verified_domains: string[]; spam_score: number | null };
   raw_size: number;
@@ -114,6 +117,7 @@ export function toOut(r: Row): MessageOut {
     codes: JSON.parse(r.codes) as string[],
     links: details.map((l) => l.url),
     link_details: details,
+    action: actionLink(details),
     attachments: JSON.parse(r.attachments ?? "[]") as AttachmentMeta[],
     auth: {
       spf: r.auth_spf || "none",

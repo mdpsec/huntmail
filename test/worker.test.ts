@@ -715,6 +715,27 @@ describe("ui", () => {
     expect(await js.text()).toContain("clipboard");
   });
 
+  it("shows a Code/link column: the code, else the action link, which the API also returns", async () => {
+    await deliver(htmlOnly('<p>Welcome</p><a href="https://site.example/help">Help</a> <a href="https://site.example/v?t=abc&amp;u=1">Confirm your account</a>'), { to: "act@hunt.example" });
+    await deliver(plain("Your code is 424242"), { to: "code@hunt.example" });
+    await deliver(plain("Just news"), { to: "none@hunt.example" });
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 5) }), env);
+    const emails = (await apiJson("/api/emails?text=0")).body.emails;
+    const by = (to: string) => emails.find((m: any) => m.to === to);
+    expect(by("act@hunt.example").action).toEqual({ kind: "Verify", url: "https://site.example/v?t=abc&u=1", text: "Confirm your account" });
+    expect(by("code@hunt.example").action).toBeNull();
+    const one = (await apiJson(`/api/emails/${by("act@hunt.example").id}`)).body;
+    expect(one.action.kind).toBe("Verify");
+    const cookie = await login();
+    const page = await (await SELF.fetch(`${BASE}/inbox`, { headers: { cookie } })).text();
+    expect(page).toContain("<th title=\"The likeliest one-time code");
+    expect(page).toContain('class="chip act" data-copy="https://site.example/v?t=abc&#38;u=1"');
+    expect(page).toContain('rel="noopener noreferrer nofollow"');
+    expect(page).toContain('data-copy="424242"');
+    const detail = await (await SELF.fetch(`${BASE}/inbox/${by("act@hunt.example").id}`, { headers: { cookie } })).text();
+    expect(detail).toContain("<dt>Action link</dt>");
+  });
+
   it("rejects forged session cookies", async () => {
     const res = await SELF.fetch(`${BASE}/inbox`, { headers: { cookie: `__Host-huntmail=9999999999.${"a".repeat(64)}` }, redirect: "manual" });
     expect(res.status).toBe(303);

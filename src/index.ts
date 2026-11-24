@@ -477,7 +477,6 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
       cursor: cursor ?? undefined,
       limit: INBOX_PAGE,
       withText: false,
-      light: true,
       order: "desc",
     });
     return html(c, inboxPage(c.root, rows, { to: p.get("to") ?? "", q: p.get("q") ?? "", paged: Boolean(cursor || before), next: nextCursor(rows, INBOX_PAGE) }));

@@ -5,6 +5,13 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.2.0 (2026-11-24)
+
+- `action` on every message: the link the mail is about (`Verify`, `Reset`,
+  `Sign in` or `Invite`), picked from its links when read.
+- Inbox: a Code/link column with the likeliest code, else that link (click to
+  copy); the message page shows it too.
+
 ## v1.1.0 (2026-11-23)
 
 - `/api/stats?days=N` adds mail per day (`days`) and per domain per day
