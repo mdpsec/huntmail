@@ -23,7 +23,7 @@ curl -s -H "X-Api-Key: $HUNTMAIL_API_KEY" "$HUNTMAIL_URL/api/wait?to=acme-k7q2x@
 
 <p>
   <a href="docs/screenshots/inbox.png"><img src="docs/screenshots/inbox.png" alt="The HuntMail inbox: recipient, sender and subject per message, with one-time codes picked out" width="49%"></a>
-  <a href="docs/screenshots/stats.png"><img src="docs/screenshots/stats.png" alt="The HuntMail stats page: mail today, storage against the cap, mail per day and per domain" width="49%"></a>
+  <a href="docs/screenshots/stats.png"><img src="docs/screenshots/stats.png" alt="The HuntMail stats page: mail today, storage against the cap, mail per day and per domain, top senders with block buttons" width="49%"></a>
 </p>
 
 <sub>The inbox and stats pages, with made-up mail.</sub>
@@ -88,6 +88,11 @@ key. Full reference: https://github.com/mdpsec/huntmail/blob/main/docs/API.md
   expire after 15 minutes; ask for a new one instead of reusing an old one.
 - History: GET $HUNTMAIL_URL/api/emails?to=<address>; pass next_cursor back as
   cursor for older pages.
+- Missing mail: some senders are blocked to cut newsletters. If a mail you
+  triggered never arrives, GET $HUNTMAIL_URL/api/blocks and look for a block
+  whose value is the sender's domain (or a parent of it), your address, or a
+  prefix of it. If one is in the way, DELETE $HUNTMAIL_URL/api/blocks/<id>,
+  trigger the mail again, and tell the user which block you removed.
 - Platform aliases (e.g. you+<unique>@wearehackerone.com or
   you+<unique>@bugcrowdninja.com) arrive at bb@yourdomain.com (one address, even
   with several domains), not at the alias.

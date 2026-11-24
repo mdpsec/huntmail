@@ -5,6 +5,32 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.6.0 (2026-11-24)
+
+- Top senders: `GET /api/senders` (`days`, default 7) lists the sites that sent
+  the most mail, with newsletter counts, size and whether a block covers them.
+  The stats page shows the last 7 days with a Block button (newsletters only)
+  on each row, and an Unblock button on blocked rows (`block_id` in the API).
+  It replaces the stats page's "Top sender domains, newest 500 emails".
+- Agent instructions (README): what to do when a triggered mail never arrives
+  (find the block in `/api/blocks`, remove it, trigger again, say so).
+- Codes: numbers in postal addresses (box, suite and unit numbers, street
+  numbers, ZIP codes) are no longer taken for codes. Applies to mail parsed
+  after the upgrade.
+- `action`: link text needs account wording. `Reset` needs "recover your
+  account" or "password recovery" rather than any "recover"; `Verify` needs
+  "confirm your email", "activate your account" and the like, or a button that
+  says only "Confirm" or "Activate", so promotions ("activate muscles",
+  "Activate Early Access") and headlines ("Finally Confirms") are no longer
+  action links. Addresses with /verify, /confirm and /activate paths still
+  count. Applies to stored mail too.
+- Wider pages (up to 1440 px). The stats page uses two columns on wide
+  screens: the daily chart beside mail by domain, and top senders beside blocks
+  and top recipients. Below 1200 px it is one column as before.
+
+Upgrading: `git pull`, then `pnpm redeploy` (or re-run `scripts/setup.sh`). No
+new migration.
+
 ## v1.5.0 (2026-11-24)
 
 - `q` also matches the address mail arrived at (`to`), so forwarded mail,

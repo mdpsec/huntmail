@@ -12,6 +12,18 @@ describe("action link", () => {
     });
     expect(actionLink([L("https://a.example/x", "Reset password")])?.kind).toBe("Reset");
     expect(actionLink([L("https://a.example/x", "Choose a new password")])?.kind).toBe("Reset");
+    expect(actionLink([L("https://a.example/x", "Recover your account")])?.kind).toBe("Reset");
+    expect(actionLink([L("https://a.example/x", "Start account recovery")])?.kind).toBe("Reset");
+    for (const t of ["Confirm email", "Confirm new phone number", "Confirm your email address", "VERIFY MY EMAIL", "Verify now", "Activate your account", "Activate", "Yes, confirm", "verifying your email address.", "Validate your email"]) {
+      expect(actionLink([L("https://a.example/x", t)])?.kind).toBe("Verify");
+    }
+    // Promotions and headlines that use the same words are not verify links.
+    for (const t of ["designed to activate muscles deep in your belly", "Activate Early Access →", "Ryan Seacrest Finally Confirms What Fans Suspected", "confirmed", "deactivate this price alert", "Verified buyer reviews"]) {
+      expect(actionLink([L("https://news.example/c/1", t)])).toBeNull();
+    }
+    // Headlines and questions that merely mention recovery are not reset links.
+    expect(actionLink([L("https://news.example/a/1", "Traders see room for market recovery")])).toBeNull();
+    expect(actionLink([L("https://q.example/q/2", "How can I recover my stolen USDT?")])).toBeNull();
     expect(actionLink([L("https://a.example/x", "Sign in with this link")])?.kind).toBe("Sign in");
     expect(actionLink([L("https://a.example/x", "Accept the invitation")])?.kind).toBe("Invite");
     expect(actionLink([L("https://a.example/x", "Join your team")])?.kind).toBe("Invite");

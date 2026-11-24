@@ -21,12 +21,22 @@ export interface ActionLink {
 const KINDS: { kind: ActionKind; text: RegExp; url: RegExp }[] = [
   {
     kind: "Verify",
-    text: /verif|confirm|activat|validat|complete (your )?(registration|sign ?up)|finish (signing up|setting up)/,
+    // Each word needs account wording or must be the whole button: newsletters "activate muscles",
+    // "confirm" news and show "verified" reviews in their link text.
+    text: new RegExp(
+      [
+        "\\bverify\\b|\\bverification\\b|verifying (your|my)",
+        "confirm (your |my |the |this )?(new )?(email|e-mail|address|account|registration|sign ?up|subscription|identity|phone|number|log ?in|sign ?in|it'?s (you|me))",
+        "(activat|validat)\\w* (your |my |the )?(new )?(email|e-mail|address|account|profile|log ?in)",
+        "^(yes,? )?(click (here )?to )?(confirm|activate|validate)( now| here)?[.!]?$",
+        "complete (your )?(registration|sign ?up)|finish (signing up|setting up)",
+      ].join("|"),
+    ),
     url: /(?:^|[^a-z0-9])(?:verif|confirm|activat|validat)/,
   },
   {
     kind: "Reset",
-    text: /reset|(set|choose|create|change) (a |your )?(new )?password|recover/,
+    text: /reset|(set|choose|create|change) (a |your )?(new )?password|recover (your |my |the )?(account|password|access|username)|(account|password) recovery/,
     url: /(?:^|[^a-z0-9])(?:reset[-_/]?pass|pass(?:word)?[-_/]?(?:reset|change|forgot)|forgot[-_/]?pass|recover)/,
   },
   {

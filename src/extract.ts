@@ -97,6 +97,22 @@ const CODE_HINT = /\b(code|otp|pin\b|passcode|verif|confirm|one[- ]time|2fa|mfa|
 const CJK_HINT = /(コード|認証|確認|验证码|驗證碼|验证|인증|코드)/;
 
 /**
+ * Numbers that are part of a postal address, which footers carry: "P.O. Box 390123",
+ * "Suite 1200", "8300 East Thorn Drive", "Mountain View, CA 94039". Never codes, hint or not.
+ */
+const ADDRESS_BEFORE = /(?:\bp\.?\s?o\.?\s?box|\bbox|\bsuite|\bste\.?|\bunit|\bapt\.?|\bapartment|\bfloor|\bfl\.|\bbldg\.?|\bbuilding)\s*#?\s*$/i;
+// Street words are matched in Title Case or capitals only, after up to three such words, so that
+// "your code is 123456 by the way" is not an address.
+const STREET = ["Street", "St", "Avenue", "Ave", "Road", "Rd", "Drive", "Dr", "Boulevard", "Blvd", "Lane", "Ln", "Way", "Court", "Ct", "Place", "Pl", "Parkway", "Pkwy", "Highway", "Hwy", "Terrace", "Circle", "Square", "Plaza"];
+const ADDRESS_AFTER = new RegExp(`^(?: [A-Z][\\w.'-]*){0,3} (?:${[...STREET, ...STREET.map((w) => w.toUpperCase())].join("|")})\\b`);
+function inAddress(src: string, start: number, end: number): boolean {
+  const before = src.slice(Math.max(0, start - 16), start);
+  // A ZIP after a state: ", CA 94039" (capitals only).
+  if (/, ?[A-Z]{2} $/.test(before) || ADDRESS_BEFORE.test(before)) return true;
+  return ADDRESS_AFTER.test(src.slice(end, end + 60).split("\n")[0]!.replace(/\s+/g, " "));
+}
+
+/**
  * Links and percent-encoded runs (tracking parameters like `utm_medium%253D2004`) are not text a
  * person reads a code from; numbers inside them are ids. They are replaced by a space before
  * scanning. A code that only appears inside a link is still reachable through the link itself.
@@ -128,6 +144,7 @@ export function extractCodes(subject: string, text: string, headerOtp?: string):
     for (const m of src.matchAll(digitRe)) {
       const code = m[1]!;
       if (code.length === 4 && /^(19|20)\d\d$/.test(code)) continue;
+      if (inAddress(src, m.index!, m.index! + code.length)) continue;
       const h = hintScore(src, m.index!, m.index! + code.length);
       // In a body, a number with no code-like word nearby is usually a ZIP, order or phone
       // fragment. Keep it only if it has the most common OTP shape, six digits, in a short mail.

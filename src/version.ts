@@ -1,2 +1,2 @@
 /** HuntMail's version, shown by /health and /api/stats. Kept equal to package.json (a test checks). */
-export const VERSION = "1.5.0";
+export const VERSION = "1.6.0";

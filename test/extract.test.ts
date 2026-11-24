@@ -116,3 +116,17 @@ describe("entities", () => {
     expect(extractLinkDetails("", '<a href="https://j.example/1">View&emsp;job</a>')[0]?.text).toBe("View job");
   });
 });
+
+describe("codes in postal addresses", () => {
+  it("skips box, suite and unit numbers, street numbers and ZIP codes", () => {
+    expect(extractCodes("News", "Thanks!\n\u00a9 2026 Acme, P.O. Box 390123, Mountain View, CA 94039")).toEqual([]);
+    expect(extractCodes("Deals", "Confirm your reservation emails. Write to: Acme 8300 East Thorn Drive, Suite 1000, Wichita")).toEqual([]);
+    expect(extractCodes("Listings", "New listing: 60 Riverside Boulevard, Unit 3801. Confirm your tour.")).toEqual([]);
+    expect(extractCodes("Hi", "Verify below. 1881 Page Mill Rd. Palo Alto, CA 94304")).toEqual([]);
+  });
+  it("keeps real codes, including ones followed by ordinary words", () => {
+    expect(extractCodes("Your code", "Your verification code is 482913 by the way.")).toEqual(["482913"]);
+    expect(extractCodes("Sign in", "Use code 7314 to sign in. Acme, 1 Main Street, Springfield")).toEqual(["7314"]);
+    expect(extractCodes("Your code is 551204", "Acme Inc, Suite 200")).toEqual(["551204"]);
+  });
+});

@@ -43,7 +43,8 @@ them.
   `404`. `GET <base>/health` answers without a key.
 - `<base>/api/stats` shows the message count, storage against the cap, the
   parse backlog and `store_failures` (mail that arrived but could not be
-  stored; non-zero means mail was lost).
+  stored; non-zero means mail was lost). `<base>/api/senders` lists who
+  sent the most mail in the last 7 days and how much was newsletters.
 - Logs: `npx wrangler tail --config wrangler.local.jsonc`, or Workers Logs in
   the dashboard. Events are JSON lines (`stored`, `store_failed`,
   `evicted`, `parse_gave_up`, `auth_fail`, ...).

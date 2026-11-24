@@ -1,4 +1,4 @@
-import type { DayCount, DomainCount, MessageOut, Overview, TopEntry } from "./store";
+import type { DayCount, DomainCount, MessageOut, Overview, SenderCount, TopEntry } from "./store";
 import type { ActionLink } from "./action";
 import { type Block, fromDomain } from "./bulk";
 import { MENU_CSS, MENU_JS, THEME_CSS, themeMenu } from "./theme";
@@ -99,7 +99,11 @@ function codeOrAction(m: MessageOut): string {
 }
 
 function blockForm(root: string, back: string, kind: string, value: string, scope: string, label: string, confirm: string): string {
-  return `<form class="blockf" method="post" action="${root}/blocks" data-confirm="${e(confirm)}"><input type="hidden" name="kind" value="${e(kind)}"><input type="hidden" name="value" value="${e(value)}"><input type="hidden" name="scope" value="${e(scope)}"><input type="hidden" name="back" value="${e(back)}"><button>${e(label)}</button></form>`;
+  return `<form class="blockf" method="post" action="${root}/blocks" data-confirm="${e(confirm)}"><input type="hidden" name="kind" value="${e(kind)}"><input type="hidden" name="value" value="${e(value)}"><input type="hidden" name="scope" value="${e(scope)}"><input type="hidden" name="back" value="${e(back)}"><button title="${e(confirm)}">${e(label)}</button></form>`;
+}
+
+function unblockForm(root: string, id: number, back: string): string {
+  return `<form class="blockf" method="post" action="${root}/blocks/${id}/delete"><input type="hidden" name="back" value="${e(back)}"><button title="Remove this block: the mail it rejects arrives again">Unblock</button></form>`;
 }
 
 /** Block buttons on a message: newsletters from its sender's domain, or everything to its address. */
@@ -126,7 +130,7 @@ ${THEME_CSS}${MENU_CSS}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica Neue,sans-serif}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
-.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+.wrap{max-width:1440px;margin:0 auto;padding:0 20px}
 .top{background:var(--card);border-bottom:1px solid var(--line)}
 .top .wrap{display:flex;align-items:center;height:54px;gap:12px}
 .brand{font-weight:650;font-size:16px;color:var(--fg);letter-spacing:-.01em}.brand:hover{text-decoration:none}
@@ -142,9 +146,9 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .meter{height:6px;border-radius:3px;background:var(--track);margin-top:8px;overflow:hidden}.meter i{display:block;height:100%;border-radius:3px;background:var(--bar)}
 .ok{color:var(--good)}.bad{color:var(--bad)}
 .chart{padding:14px 18px 6px}.chart h2,.card h2{font-size:14px;margin:0 0 8px}.card h2{padding:14px 18px 0}
-.chart svg{display:block;width:100%;height:auto}.chart .bar{fill:var(--bar)}.chart .grid{stroke:var(--line)}.chart text{fill:var(--mut);font-size:11px}
+.chart svg{display:block;width:100%;height:auto;max-height:300px}.card .chart h2{padding:0}.chart .bar{fill:var(--bar)}.chart .grid{stroke:var(--line)}.chart text{fill:var(--mut);font-size:11px}
 .chart g.col:hover .bar{opacity:.75}.chart .hit{fill:transparent}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}.cols>.card+.card{margin-top:0}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;margin-top:16px}.cols>*{margin-top:0!important}.stack>*+*{margin-top:16px}
 details.tbl{padding:0 18px 14px}details.tbl summary{cursor:pointer;color:var(--mut);font-size:12.5px;padding:6px 0}
 table.num td,table.num th{white-space:nowrap}table.num td.r,table.num th.r{text-align:right;font-variant-numeric:tabular-nums}
 .auto{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:13px;color:var(--mut);cursor:help}.auto input{margin:0}
@@ -161,7 +165,7 @@ button{cursor:pointer;background:var(--row)}button:hover{border-color:var(--mut)
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 th{font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);text-align:left;padding:9px 14px;border-bottom:1px solid var(--line)}
 td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--row)}tr[data-href]{cursor:pointer}
+td.btn{padding-top:6px;padding-bottom:6px;vertical-align:middle}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--row)}tr[data-href]{cursor:pointer}
 td.t{color:var(--mut);font-variant-numeric:tabular-nums}
 td .sub{display:block;font-size:12px;color:var(--mut);overflow:hidden;text-overflow:ellipsis}
 td.s a{color:var(--fg);font-weight:500}
@@ -192,7 +196,8 @@ iframe{display:block;width:100%;height:78vh;border:0;background:#fff}
 .login .card{width:100%;max-width:380px;padding:28px}
 .login form{display:grid;gap:12px}.login h1{margin-bottom:4px}
 .err{color:var(--bad)}
-@media (max-width:720px){.hide-sm{display:none}dl{grid-template-columns:1fr}dt{margin-top:6px}.cols{grid-template-columns:1fr}}
+@media (max-width:1200px){.cols{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:720px){.hide-sm{display:none}dl{grid-template-columns:1fr}dt{margin-top:6px}}
 `;
 
 function page(root: string, title: string, body: string, nav = true, current = "inbox"): string {
@@ -363,8 +368,9 @@ function niceStep(raw: number): number {
 
 /** Single-series column chart, one column per day. Native SVG tooltips; no script. */
 function dayChart(days: DayCount[]): string {
-  const W = 960;
-  const H = 220;
+  // Sized for half the page; capped in height when it spans the full width (see .chart svg).
+  const W = 640;
+  const H = 230;
   const left = 44;
   const right = 8;
   const top = 10;
@@ -434,7 +440,7 @@ function domainTable(rows: DomainCount[], setUp: string[], windowDays: number): 
         })
         .join("")
     : "";
-  return `<div class="card" style="margin-top:16px"><h2>Mail by domain, last ${windowDays} days (UTC)</h2>${
+  return `<div class="card"><h2>Mail by domain, last ${windowDays} days (UTC)</h2>${
     body
       ? `<table class="num"><colgroup><col><col class="hide-sm" style="width:34%"><col style="width:84px"><col class="hide-sm" style="width:72px"><col style="width:64px"></colgroup><thead><tr><th>Domain</th><th class="hide-sm"></th><th class="r">Emails</th><th class="r hide-sm">Share</th><th class="r">Today</th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No mail yet.</div>`
@@ -450,8 +456,33 @@ export interface StatsData {
   setUp: string[];
   maxStoreBytes: number;
   retentionDays: number;
-  top: { sample: number; recipients: TopEntry[]; senders: TopEntry[] };
+  top: { sample: number; recipients: TopEntry[] };
   blocks: Block[];
+  /** The sites that sent the most mail in the last 7 days. */
+  senders: SenderCount[];
+}
+
+/** Top senders, last 7 days, each with a button to block its newsletters. */
+function sendersTable(root: string, senders: SenderCount[]): string {
+  const back = `${root}/stats#senders`;
+  const action = (s: SenderCount) =>
+    s.block_id
+      ? unblockForm(root, s.block_id, back)
+      : s.newsletters
+        ? blockForm(root, back, "sender", s.domain, "newsletters", "Block",
+            `Reject newsletters from ${s.domain} and its subdomains from now on? Mail with a code, an action link or an account subject still arrives.`)
+        : `<span class="mut" title="No newsletters from this sender in the last 7 days: nothing to block">–</span>`;
+  const rows = senders
+    .map(
+      (s) =>
+        `<tr><td>${e(s.domain)}${s.blocked ? `<span class="tag" title="${s.blocked === "all" ? "All mail from this sender is rejected" : "Newsletters from this sender are rejected; other mail arrives"}">${s.blocked === "all" ? "all blocked" : "blocked"}</span>` : ""}</td><td class="r">${s.messages.toLocaleString("en-US")}</td><td class="r">${s.newsletters.toLocaleString("en-US")}</td><td class="r hide-sm">${e(mb(s.bytes))}</td><td class="r${s.block_id || s.newsletters ? " btn" : ""}">${action(s)}</td></tr>`,
+    )
+    .join("");
+  return `<div class="card" id="senders"><h2>Top senders, last 7 days</h2><p class="mut" style="margin:4px 18px 8px;font-size:12.5px">Grouped by site (news.shop.example counts as shop.example). Newsletters are mail with unsubscribe headers and no code or action link; a sender with many is a good one to block. Blocked mail is not stored, so it stops counting here.</p>${
+    senders.length
+      ? `<table class="num"><colgroup><col><col style="width:70px"><col style="width:112px"><col class="hide-sm" style="width:84px"><col style="width:104px"></colgroup><thead><tr><th>Sender</th><th class="r">Mail</th><th class="r">Newsletters</th><th class="r hide-sm">Size</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<div class="empty" style="padding:16px">No mail in the last 7 days.</div>`
+  }</div>`;
 }
 
 function blocksTable(root: string, blocks: Block[], blocked: number, newsletters: number): string {
@@ -460,12 +491,12 @@ function blocksTable(root: string, blocks: Block[], blocked: number, newsletters
   const rows = blocks
     .map(
       (b) =>
-        `<tr><td><span class="mut">${what(b)}</span> ${e(b.value)}</td><td class="r">${b.hits.toLocaleString("en-US")}</td><td class="hide-sm">${b.last_hit ? e(shortTime(b.last_hit)) + " UTC" : `<span class="mut">never</span>`}</td><td class="r"><form class="blockf" method="post" action="${root}/blocks/${b.id}/delete"><button>Unblock</button></form></td></tr>`,
+        `<tr><td><span class="mut">${what(b)}</span> ${e(b.value)}</td><td class="r">${b.hits.toLocaleString("en-US")}</td><td class="hide-sm">${b.last_hit ? e(shortTime(b.last_hit)) + " UTC" : `<span class="mut">never</span>`}</td><td class="r btn">${unblockForm(root, b.id, `${root}/stats#blocks`)}</td></tr>`,
     )
     .join("");
-  return `<div class="card" id="blocks" style="margin-top:16px"><h2>Blocks</h2><p class="mut" style="margin:4px 18px 8px;font-size:12.5px">${blocked.toLocaleString("en-US")} message${blocked === 1 ? "" : "s"} rejected so far. ${newsletters.toLocaleString("en-US")} newsletter${newsletters === 1 ? "" : "s"} stored (hidden in the inbox). Block a sender or an address from a message's page.</p>${
+  return `<div class="card" id="blocks"><h2>Blocks</h2><p class="mut" style="margin:4px 18px 8px;font-size:12.5px">${blocked.toLocaleString("en-US")} message${blocked === 1 ? "" : "s"} rejected so far. ${newsletters.toLocaleString("en-US")} newsletter${newsletters === 1 ? "" : "s"} stored (hidden in the inbox). Block a sender from Top senders above, or a sender or an address from a message's page.</p>${
     blocks.length
-      ? `<table class="num"><colgroup><col><col style="width:90px"><col class="hide-sm" style="width:150px"><col style="width:110px"></colgroup><thead><tr><th>Rejected</th><th class="r">Hits</th><th class="hide-sm">Last</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<table class="num"><colgroup><col><col style="width:90px"><col class="hide-sm" style="width:180px"><col style="width:100px"></colgroup><thead><tr><th>Rejected</th><th class="r">Hits</th><th class="hide-sm">Last</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="empty" style="padding:16px">No blocks.</div>`
   }</div>`;
 }
@@ -478,7 +509,7 @@ export function statsPage(root: string, s: StatsData): string {
   const when = (t: number | null) => (t ? `${shortTime(new Date(t).toISOString())} UTC` : "none");
   const tip =
     "Reloads this page every 30 seconds while the tab is visible. Each reload is one Worker request (about 120 an hour) " +
-    "and a few hundred database reads. Fine on Workers Paid; on the free plan it counts toward the 100,000 requests a day " +
+    "and database reads: a few hundred, plus about two per email of the last 7 days for Top senders. Fine on Workers Paid; on the free plan it counts toward the 100,000 requests a day " +
     "shared by all your Workers, so leave it off when you are not watching.";
   const failures = o.storeFailures
     ? `<div class="v bad">! ${o.storeFailures.toLocaleString("en-US")}</div><div class="s">mail lost, last ${e(when(o.lastStoreFailure))}</div>`
@@ -502,10 +533,14 @@ export function statsPage(root: string, s: StatsData): string {
     }</div></div>
 <div class="tile"><div class="l">Store failures</div>${failures}</div>
 </div>
+<div class="cols">
 <div class="card"><div class="chart"><h2>Emails per day, last ${s.days.length} days (UTC)</h2>${dayChart(s.days)}</div>${table}</div>
 ${domainTable(s.domains, s.setUp, s.days.length)}
-<div class="cols" style="margin-top:16px">${topTable(`Top recipients, newest ${s.top.sample} emails`, s.top.recipients)}${topTable(`Top sender domains, newest ${s.top.sample} emails`, s.top.senders)}</div>
-${blocksTable(root, s.blocks, o.blocked, o.newsletters)}
+</div>
+<div class="cols">
+${sendersTable(root, s.senders)}
+<div class="stack">${blocksTable(root, s.blocks, o.blocked, o.newsletters)}${topTable(`Top recipients, newest ${s.top.sample} emails`, s.top.recipients)}</div>
+</div>
 <p class="mut" style="font-size:12px;margin-top:14px">Daily counts are kept for a year, even after old mail is removed by retention (${s.retentionDays} days) or the size cap.</p>`,
     true,
     "stats",

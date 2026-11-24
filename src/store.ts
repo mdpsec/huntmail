@@ -1,5 +1,5 @@
 import { actionLink, type ActionLink, type LinkKind, linkKind } from "./action";
-import { fromDomain } from "./bulk";
+import { type BlockScope, domainSuffixes, fromDomain, listBlocks, siteOf } from "./bulk";
 import { decodeLeftoverEntities, type LinkDetail } from "./extract";
 import { concatBytes, gunzip } from "./util";
 
@@ -621,27 +621,69 @@ export interface TopEntry {
   count: number;
 }
 
-/** Most common recipients and sender domains among the newest `sample` messages. */
-export async function recentTop(db: D1Database, sample = 500, limit = 8): Promise<{ sample: number; recipients: TopEntry[]; senders: TopEntry[] }> {
+/** Most common recipients among the newest `sample` messages. */
+export async function recentTop(db: D1Database, sample = 500, limit = 8): Promise<{ sample: number; recipients: TopEntry[] }> {
   const { results } = await db
-    .prepare(`SELECT envelope_to, header_from, envelope_from FROM messages ORDER BY received_at DESC LIMIT ?1`)
+    .prepare(`SELECT envelope_to FROM messages ORDER BY received_at DESC LIMIT ?1`)
     .bind(sample)
-    .all<{ envelope_to: string; header_from: string; envelope_from: string }>();
-  const tally = (keys: string[]) => {
-    const m = new Map<string, number>();
-    for (const k of keys) if (k) m.set(k, (m.get(k) ?? 0) + 1);
-    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([key, count]) => ({ key, count }));
-  };
-  const domain = (from: string) => {
-    const s = from.endsWith(">") ? from.slice(from.lastIndexOf("<") + 1, -1) : from;
-    const at = s.lastIndexOf("@");
-    return at === -1 ? "" : s.slice(at + 1).toLowerCase();
-  };
-  return {
-    sample: results.length,
-    recipients: tally(results.map((r) => r.envelope_to)),
-    senders: tally(results.map((r) => domain(r.header_from || r.envelope_from))),
-  };
+    .all<{ envelope_to: string }>();
+  const m = new Map<string, number>();
+  for (const r of results) if (r.envelope_to) m.set(r.envelope_to, (m.get(r.envelope_to) ?? 0) + 1);
+  const recipients = [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([key, count]) => ({ key, count }));
+  return { sample: results.length, recipients };
+}
+
+export interface SenderCount {
+  /** The sender's site (see siteOf): the value a sender block takes. */
+  domain: string;
+  messages: number;
+  newsletters: number;
+  /** Raw size of its mail. */
+  bytes: number;
+  /** The scope of a sender block covering it, or null. */
+  blocked: BlockScope | null;
+  /** That block's id, for DELETE /api/blocks/:id; null when not blocked. */
+  block_id: number | null;
+}
+
+/**
+ * The sites that sent the most mail since `since` (ms), with how much of it was newsletters, so a
+ * reader can see whom to block. Groups by the From header in the database (a few hundred distinct
+ * values a week), then by site here. Mail that was blocked is not stored, so it is not counted.
+ */
+export async function topSenders(db: D1Database, since: number, limit = 25): Promise<SenderCount[]> {
+  const [{ results }, blocks] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COALESCE(NULLIF(header_from, ''), envelope_from) AS f, COUNT(*) AS n, SUM(${NEWSLETTER_SQL}) AS nl, SUM(raw_size) AS b
+         FROM messages WHERE received_at >= ?1 GROUP BY f`,
+      )
+      .bind(since)
+      .all<{ f: string; n: number; nl: number; b: number }>(),
+    listBlocks(db),
+  ]);
+  const by = new Map<string, SenderCount>();
+  for (const r of results) {
+    const site = siteOf(fromDomain(r.f ?? ""));
+    if (!site) continue;
+    const s = by.get(site) ?? { domain: site, messages: 0, newsletters: 0, bytes: 0, blocked: null, block_id: null };
+    s.messages += r.n;
+    s.newsletters += r.nl ?? 0;
+    s.bytes += r.b ?? 0;
+    by.set(site, s);
+  }
+  const senderBlocks = new Map(blocks.filter((b) => b.kind === "sender").map((b) => [b.value, b]));
+  const top = [...by.values()]
+    .sort((a, b) => b.messages - a.messages || b.newsletters - a.newsletters || a.domain.localeCompare(b.domain))
+    .slice(0, limit);
+  for (const s of top) {
+    // The site's own block, or a parent's; one that rejects all mail first.
+    const covering = domainSuffixes(s.domain).map((d) => senderBlocks.get(d)).filter((b) => !!b);
+    const b = covering.find((x) => x.scope === "all") ?? covering[0];
+    s.blocked = b?.scope ?? null;
+    s.block_id = b?.id ?? null;
+  }
+  return top;
 }
 
 export interface DomainCount {

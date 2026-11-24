@@ -16,6 +16,7 @@ import {
   nextCursor,
   overview,
   recentTop,
+  topSenders,
   parseCursor,
   storedBytes,
   type ListQuery,
@@ -301,6 +302,15 @@ async function api(req: Request, env: Env, url: URL, parts: string[], c: Ctx): P
     });
   }
 
+  // /api/senders: the sites that sent the most mail lately, with their newsletter counts.
+  if (parts[1] === "senders" && parts.length === 2 && req.method === "GET") {
+    const days = url.searchParams.has("days") ? Number(url.searchParams.get("days")) : 7;
+    const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 25;
+    if (!Number.isInteger(days) || days < 1 || days > 400) return errorJson(400, "days is 1-400");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return errorJson(400, "limit is 1-100");
+    return json({ days, senders: await topSenders(env.DB, Date.now() - days * 86_400_000, limit) });
+  }
+
   // /api/blocks: senders, addresses and address families whose mail is rejected at arrival.
   if (parts[1] === "blocks") {
     if (parts.length === 2 && req.method === "GET") return json({ blocks: await listBlocks(env.DB) });
@@ -495,18 +505,20 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
     }
     if (parts.length === 3 && parts[2] === "delete" && /^\d{1,12}$/.test(parts[1]!)) {
       await removeBlock(env.DB, Number(parts[1]));
-      return redirect(`${c.root}/stats#blocks`);
+      const back = (await req.formData().catch(() => null))?.get("back");
+      return redirect(typeof back === "string" && back.startsWith(`${c.root}/`) && !back.includes("//", 1) ? back : `${c.root}/stats#blocks`);
     }
     return html(c, "Not found", 404);
   }
 
   if (parts[0] === "stats" && parts.length === 1) {
-    const [o, days, top, domains, blocks] = await Promise.all([
+    const [o, days, top, domains, blocks, senders] = await Promise.all([
       overview(env.DB),
       dailyCounts(env.DB, 30),
       recentTop(env.DB),
       domainCounts(env.DB, 30),
       listBlocks(env.DB),
+      topSenders(env.DB, Date.now() - 7 * 86_400_000, 20),
     ]);
     return html(c, statsPage(c.root, {
       overview: o,
@@ -514,6 +526,7 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
       top,
       domains,
       blocks,
+      senders,
       setUp: listVar(env.DOMAINS),
       maxStoreBytes: intVar(env.MAX_STORE_MB, DEFAULT_MAX_STORE_MB, 1) * 1024 * 1024,
       retentionDays: intVar(env.RETENTION_DAYS, 30, 0),

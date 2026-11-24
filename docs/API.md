@@ -4,7 +4,7 @@ Base URL (`HUNTMAIL_URL`): `https://<worker-name>.<your-subdomain>.workers.dev/<
 
 **User-Agent:** Cloudflare's edge rejects Python's default `Python-urllib/x.y` User-Agent on `workers.dev` hosts with `error code: 1010` before the request reaches the Worker. Set any User-Agent header when using `urllib`. curl, wget, requests, httpx, aiohttp, Node and Go clients work as-is.
 
-`GET /health` needs no key and returns `{"ok": true, "version": "1.5.0"}` (the running HuntMail version).
+`GET /health` needs no key and returns `{"ok": true, "version": "1.6.0"}` (the running HuntMail version).
 
 All `/api/*` routes need the key, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Responses are JSON unless noted. Times are ISO 8601 UTC. `since` and `before` also accept unix seconds or milliseconds.
 
@@ -46,10 +46,10 @@ Anyone on the internet can send mail to any address on your domain, and can forg
 ```
 
 - `to` is the envelope recipient, lowercased. Filtering on `to` is an exact match.
-- `codes`: likely one-time codes, best guess first. Digit codes of 4-8 next to words like "code", "verify" or "PIN" (or anywhere in the subject), bare six-digit numbers in short mail, joined `123 456` style codes, and letter+digit codes next to code words.
+- `codes`: likely one-time codes, best guess first. Digit codes of 4-8 next to words like "code", "verify" or "PIN" (or anywhere in the subject), bare six-digit numbers in short mail, joined `123 456` style codes, and letter+digit codes next to code words. Numbers in a postal address are skipped: after "P.O. Box", "Suite", "Unit" and the like, before a street name ("8300 East Thorn Drive"), or a ZIP after a state ("CA 94039").
 - `links`: http(s) links from the HTML, then the plain text, in order, de-duplicated, entities decoded. Only links a reader can click: stylesheet and font `<link>` tags are skipped.
 - `link_details`: the same links, each with the `text` a reader sees (for image buttons, the image's alt text; `""` for links found in plain text). Use it to pick the right link, e.g. the one whose text says "Reset password" rather than "Unsubscribe". The text is written by the sender and can be anything; opening a link counts as a click and may use up a one-time token. Each also has a `kind`, so a reader can fold away the links every mail carries: `action` (the message's `action` link), `unsubscribe` (unsubscribe and email preferences), `view` (view in browser), `social`, `app` (app stores), `legal` (privacy, terms, cookies), `support` (help, contact, FAQ), `image` (logo and icon links), or `""` for everything else, the content. Worked out from the text first and the address second, when the mail is read, so it applies to stored mail too. A best guess, like `action`.
-- `action`: the link the mail is about, or `null`: `kind` is `Verify` (verify or confirm an address, activate an account), `Reset` (password reset), `Sign in` (magic link) or `Invite`, with its `url` and `text`. Picked from `link_details` by the link text first (unless the text is itself an address), then by words at the start of a path segment in the address (never the query); unsubscribe, preferences, social and help links never count. A best guess from sender-controlled links: check it before an agent opens it.
+- `action`: the link the mail is about, or `null`: `kind` is `Verify` (verify or confirm an address, activate an account), `Reset` (password reset), `Sign in` (magic link) or `Invite`, with its `url` and `text`. Picked from `link_details` by the link text first (account wording such as "Verify", "Confirm your email", "Reset password"; unless the text is itself an address), then by words at the start of a path segment in the address (never the query); unsubscribe, preferences, social and help links never count. A best guess from sender-controlled links: check it before an agent opens it.
 - `newsletter`: `true` for a newsletter (see "Newsletters and blocks"). `false` until the message is parsed.
 - `sender_domain`: the From header's domain, lowercased (`""` without one). The value to send for a sender block.
 - `auth`: the verdicts Cloudflare's MX recorded on arrival (`pass`, `fail`, `none`, ...). Only Cloudflare's own `Authentication-Results` header is read; copies further down the message are ignored, since a sender can write those. The parse fails closed: if the header could have been shaped by the sender (an envelope sender with quotes, brackets or `;`, quotes or unbalanced comments in the header, or more DKIM passes than DKIM signatures), all verdicts read `none`. `verified_domains` lists domains with a passing DKIM signature, plus the From domain when DMARC passed. `spam_score` is Cloudflare's score when present.
@@ -138,19 +138,22 @@ npx playwright screenshot --full-page "$LINK" email.png
 
 A message is a **newsletter** when all of these hold: it has newsletter headers (`List-Unsubscribe`, `List-Id`, or `Precedence: bulk`), it has been parsed, it has no code and no `action` link, and its subject does not look like account mail (verify, confirm, password, your code, sign in, security alert, welcome, invite, your account, new device and the like, in English and the common European and East Asian languages). Many sites send their sign-up and reset mail through the same mailing services as their newsletters, so the headers alone never decide. Newsletters are kept, not deleted: the inbox hides them by default (a list filtered to one address shows everything), `newsletters=hide` leaves them out of a list, the size cap evicts them first, and `NEWSLETTER_RETENTION_DAYS` can keep them for fewer days than other mail.
 
-A **block** rejects mail at arrival: it is never stored or forwarded, and the sender gets a bounce, which makes mailing lists drop the address. Block from a message's page in the inbox, or through the API:
+A **block** rejects mail at arrival: it is never stored or forwarded, and the sender gets a bounce, which makes mailing lists drop the address. Block from a message's page in the inbox, from **Top senders** on the stats page, or through the API:
 
 | Route | |
 |---|---|
 | `GET /api/blocks` | `{"blocks": [{id, kind, value, scope, created_at, hits, last_hit}]}` |
 | `POST /api/blocks` | JSON `{kind, value, scope}`. `201` with the block, or `200` with the existing one for the same `kind` and `value` (its `scope` updated) |
 | `DELETE /api/blocks/:id` | `{"ok": true}`, or `404` |
+| `GET /api/senders` | Who sends the most: `{"days": 7, "senders": [{domain, messages, newsletters, bytes, blocked, block_id}]}` |
 
 - `kind: "sender"`, `value`: a domain. Matches the From header's domain and its subdomains (`shop.example` covers `news.shop.example`). `scope: "newsletters"` (the default) rejects only mail with newsletter headers whose subject does not look like account mail, so the site's own verify and reset mail still arrives; `scope: "all"` rejects everything from it.
 - `kind: "recipient"`, `value`: one address. Everything to it is rejected.
 - `kind: "prefix"`, `value`: addresses starting with it, with the same rules as `to_prefix` (`acme-` retires every `acme-...@` address). Everything to them is rejected.
 
-At most 1000 blocks. Each arrival costs one extra database read to check them.
+At most 1000 blocks. Each arrival costs one extra database read to check them. A block takes effect on the next arrival, and so does removing it; mail rejected while it was in place is gone (the sender got a bounce), so trigger it again. If an expected mail never arrives, check `GET /api/blocks` for a sender block on its domain (or a recipient or prefix block on its address). The stats page has an Unblock button on each block and on each blocked row of Top senders.
+
+`GET /api/senders` (`days`, 1 to 400, default 7; `limit`, 1 to 100, default 25) lists the sites whose mail was received in the last `days` days, most mail first: `messages`, how many of them are `newsletters`, their raw size in `bytes`, and `blocked` (`"newsletters"` or `"all"` when a sender block covers the site, else `null`) with that block's `block_id` (`DELETE /api/blocks/<block_id>` removes it). Sites group the From header's domain by its last two labels, or three under a country's second level (`news.shop.example` and `shop.example` count as `shop.example`; `mail.shop.co.uk` as `shop.co.uk`), which is also the value a sender block takes. Blocked mail is never stored, so it does not count. A query reads about two database rows per message in the window.
 
 ## Rendered view: `<base>/view/:id?t=...`
 

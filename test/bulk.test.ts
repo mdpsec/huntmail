@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { domainSuffixes, fromDomain, isBulk, parseBlock } from "../src/bulk";
+import { domainSuffixes, fromDomain, isBulk, parseBlock, siteOf } from "../src/bulk";
 
 const hdrs = (o: Record<string, string>) => new Headers(o);
 
@@ -29,6 +29,12 @@ describe("newsletter headers", () => {
     expect(fromDomain("no address")).toBe("");
     expect(domainSuffixes("a.messages.webmd.com")).toEqual(["a.messages.webmd.com", "messages.webmd.com", "webmd.com"]);
     expect(domainSuffixes("")).toEqual([]);
+    expect(siteOf("messages.webmd.com")).toBe("webmd.com");
+    expect(siteOf("webmd.com")).toBe("webmd.com");
+    expect(siteOf("e.news.shop.co.uk")).toBe("shop.co.uk");
+    expect(siteOf("mail.tamilmurasu.com.sg")).toBe("tamilmurasu.com.sg");
+    expect(siteOf("beritaharian.sg")).toBe("beritaharian.sg");
+    expect(siteOf("localhost")).toBe("");
   });
 
   it("validates block requests", () => {

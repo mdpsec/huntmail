@@ -46,6 +46,18 @@ export function domainSuffixes(domain: string): string[] {
   return out;
 }
 
+/**
+ * The site a sender domain belongs to, for grouping and for the sender block that covers it: the
+ * last two labels, or three under a country's second level (shop.example.co.uk gives
+ * example.co.uk). A rule of thumb, not the public suffix list.
+ */
+export function siteOf(domain: string): string {
+  const labels = domain.split(".").filter(Boolean);
+  if (labels.length < 2) return "";
+  const n = labels.length >= 3 && labels.at(-1)!.length === 2 && /^(co|com|net|org|gov|edu|ac|or|ne|go)$/.test(labels.at(-2)!) ? 3 : 2;
+  return labels.slice(-n).join(".");
+}
+
 export type BlockKind = "sender" | "recipient" | "prefix";
 export type BlockScope = "newsletters" | "all";
 

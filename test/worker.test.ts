@@ -27,7 +27,7 @@ async function apiJson<T = any>(path: string, init: RequestInit = {}): Promise<{
 }
 
 beforeEach(async () => {
-  await env.DB.batch([env.DB.prepare("DELETE FROM raw_chunks"), env.DB.prepare("DELETE FROM messages"), env.DB.prepare("DELETE FROM daily_stats"), env.DB.prepare("DELETE FROM domain_daily")]);
+  await env.DB.batch([env.DB.prepare("DELETE FROM raw_chunks"), env.DB.prepare("DELETE FROM messages"), env.DB.prepare("DELETE FROM daily_stats"), env.DB.prepare("DELETE FROM domain_daily"), env.DB.prepare("DELETE FROM blocks")]);
 });
 
 describe("ingest", () => {
@@ -932,7 +932,7 @@ describe("stats", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-security-policy")).toContain(`script-src ${BASE}/ui.js`);
     const page = await res.text();
-    expect(page).toContain('<svg viewBox="0 0 960 220" role="img" aria-label="Emails received per day, last 30 days">');
+    expect(page).toContain('<svg viewBox="0 0 640 230" role="img" aria-label="Emails received per day, last 30 days">');
     expect(page.match(/<g class="col">/g)).toHaveLength(30);
     expect(page).toContain('<input type="checkbox" id="autorefresh">');
     expect(page).not.toMatch(/id="autorefresh"[^>]*checked/);
@@ -1083,6 +1083,50 @@ describe("newsletters and blocks", () => {
     expect(await left()).toEqual(["keep@hunt.example"]);
     const sum = await env.DB.prepare(`SELECT (SELECT v FROM meta WHERE k = 'stored_bytes') AS counted, COALESCE(SUM(stored_size), 0) AS rows FROM messages`).first<any>();
     expect(sum.counted).toBe(sum.rows);
+  });
+
+  it("top senders: last 7 days by site, with newsletter counts, block state and a block button", async () => {
+    await deliver(news("Deals 1"), { to: "s1@hunt.example" });
+    await deliver(news("Deals 2"), { to: "s2@hunt.example" });
+    await deliver(plain("Your code is 515151", { subject: "Your Shop code", from: "Shop <no-reply@shop.example>" }), { to: "s3@hunt.example" });
+    await deliver(plain("hi", { from: "Other <a@other.example>" }), { to: "s4@hunt.example" });
+    await deliver(plain("hi", { from: "Brit <a@news.brit.co.uk>" }), { to: "s5@hunt.example" });
+    await parseAll();
+    const senders = async (qs = "") => (await apiJson(`/api/senders${qs}`)).body;
+    const body = await senders();
+    expect(body.days).toBe(7);
+    expect(body.senders[0]).toMatchObject({ domain: "shop.example", messages: 3, newsletters: 2, blocked: null });
+    expect(body.senders[0].bytes).toBeGreaterThan(0);
+    expect(body.senders.map((s: any) => s.domain).sort()).toEqual(["brit.co.uk", "other.example", "shop.example"]);
+    expect((await senders("?limit=1")).senders).toHaveLength(1);
+    for (const bad of ["?days=0", "?days=401", "?limit=0", "?limit=101", "?days=x"]) expect((await apiJson(`/api/senders${bad}`)).status).toBe(400);
+
+    const res = await worker.fetch(new Request(`${BASE}/login`, { method: "POST", body: new URLSearchParams({ key: KEY }) }), env);
+    const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    const stats = async () => (await (await SELF.fetch(`${BASE}/stats`, { headers: { cookie } })).text());
+    let page = await stats();
+    expect(page).toContain("Top senders, last 7 days");
+    expect(page).toContain('<input type="hidden" name="kind" value="sender"><input type="hidden" name="value" value="shop.example">');
+    expect(page).toContain("No newsletters from this sender in the last 7 days"); // other.example sent none: no button
+    await apiJson("/api/blocks", { method: "POST", body: JSON.stringify({ kind: "sender", value: "shop.example" }), headers: { "content-type": "application/json" } });
+    expect((await senders()).senders[0].blocked).toBe("newsletters");
+    page = await stats();
+    expect(page).toContain(">blocked</span>");
+    expect(page).not.toContain('name="value" value="shop.example"><input type="hidden" name="scope" value="newsletters"><input type="hidden" name="back" value="/p7f3a9c2e8b14d6f0a5c/stats#senders">');
+    // Unblock from the same row: the API gives the block's id, and the button comes back here.
+    const id = (await senders()).senders[0].block_id;
+    expect(id).toBeGreaterThan(0);
+    expect((await senders()).senders.find((x: any) => x.domain === "other.example").block_id).toBeNull();
+    expect(page).toContain(`action="/p7f3a9c2e8b14d6f0a5c/blocks/${id}/delete"><input type="hidden" name="back" value="/p7f3a9c2e8b14d6f0a5c/stats#senders"><button`);
+    const un = await SELF.fetch(`${BASE}/blocks/${id}/delete`, { method: "POST", redirect: "manual", body: new URLSearchParams({ back: "/p7f3a9c2e8b14d6f0a5c/stats#senders" }), headers: { cookie } });
+    expect(un.status).toBe(303);
+    expect(un.headers.get("location")).toContain("/stats#senders");
+    expect((await senders()).senders[0]).toMatchObject({ blocked: null, block_id: null });
+    // A back address outside the base path is ignored.
+    await apiJson("/api/blocks", { method: "POST", body: JSON.stringify({ kind: "sender", value: "shop.example" }), headers: { "content-type": "application/json" } });
+    const id2 = (await senders()).senders[0].block_id;
+    const evil = await SELF.fetch(`${BASE}/blocks/${id2}/delete`, { method: "POST", redirect: "manual", body: new URLSearchParams({ back: "https://evil.example/" }), headers: { cookie } });
+    expect(evil.headers.get("location")).toContain("/stats#blocks");
   });
 
   it("blocks: an idempotent API, and mail rejected at arrival, never stored", async () => {
