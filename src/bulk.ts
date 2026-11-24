@@ -9,9 +9,12 @@
 /** Subjects that look like account mail: never treated as newsletters, never blocked as one. */
 export const ACCOUNT_SUBJECT = new RegExp(
   [
-    // English
-    "verif|confirm|activat|password|passcode|pass code|one[- ]?time|\\botp\\b|\\bcode\\b|sign[- ]?in|log[- ]?in|sign[- ]?on|security|invit|\\b2fa\\b|two[- ]factor",
-    "welcome|account|registration|sign[- ]?up|reset|magic link|access (code|request|granted|link)|new device|organi[sz]ation|removed from|added to",
+    // English. Kept to phrases account mail uses: job alerts and offers say "Security Consultant",
+    // "Account Manager" or "Code Reviewer" too.
+    "verif|confirm|activat|password|passcode|pass code|one[- ]?time|\\botp\\b|sign[- ]?in|log[- ]?in|sign[- ]?on|\\b2fa\\b|\\bmfa\\b|two[- ]factor|multi[- ]?factor|magic link|reset",
+    "security (alert|notice|notification|code|check|warning|update|key|question|issue|event)|unusual (activity|sign|log)|suspicious|new device",
+    "your (\\w+ )?(code|account|pin)\\b|account (verification|confirm|security|update|created|activation|locked|alert|recovery|change|access)|new account|(verification|security|login|confirmation|access|auth\\w*) code|\\bcode (is|:)",
+    "welcome (to|aboard)|registration|sign[- ]?up|(you're|you are|you've been|you have been) invited|invit(e|es|ed) you|accept (the |your )?invit|access (code|request|granted|link)|organi[sz]ation|removed from|added to",
     // Spanish, Portuguese, French, German, Italian, Dutch
     "contrase|senha|mot de passe|passwort|wachtwoord|código|codice|cuenta|conta\\b|compte|konto|bestätig|anmeld|connexion|inicio de sesi|accesso|inloggen",
     // Japanese, Chinese, Korean: log in, verify, confirm, password, code, invite, security, account, register

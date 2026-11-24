@@ -182,6 +182,8 @@ dt{color:var(--mut)}dd{margin:0;word-break:break-word;min-width:0}
 .lk.copied{background:var(--good);color:var(--ongood)}.lk.copied span{color:var(--ongood)}
 .nltog{margin-left:auto;font-size:13px}
 .blockf{display:inline}.blockf button{font-size:12.5px;padding:4px 9px}
+details.more summary{cursor:pointer;color:var(--mut);font-size:12.5px;margin-top:6px}
+.lkk{flex:0 0 auto;font-style:normal;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 5px}
 .tools{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)}
 .tools .mut{margin-left:auto;font-size:12px}
 iframe{display:block;width:100%;height:78vh;border:0;background:#fff}
@@ -299,10 +301,17 @@ function authLine(m: MessageOut): string {
 
 export function messagePage(root: string, m: MessageOut, viewUrl: string, viewUrlImages: string, bodyUrl: string): string {
   const codes = m.codes.length ? m.codes.map(codeChip).join("") : `<span class="mut">none</span>`;
+  // Content and the action link first; the links every mail carries (unsubscribe, social, legal,
+  // app stores, view online, support, logos) folded away.
+  const linkRow = (l: MessageOut["link_details"][number]) =>
+    `<div class="lk" data-copy="${e(l.url)}" title="Click to copy the URL">${l.kind && l.kind !== "action" ? `<i class="lkk">${e(l.kind)}</i>` : ""}${l.text ? `<b>${e(l.text)}</b>` : ""}<span>${e(l.url)}</span></div>`;
+  const main = m.link_details.filter((l) => l.kind === "" || l.kind === "action");
+  const rest = m.link_details.filter((l) => l.kind !== "" && l.kind !== "action");
+  const restKinds = [...new Set(rest.map((l) => l.kind))].join(", ");
   const links = m.links.length
-    ? `<div class="links">${m.link_details
-        .map((l) => `<div class="lk" data-copy="${e(l.url)}" title="Click to copy the URL">${l.text ? `<b>${e(l.text)}</b>` : ""}<span>${e(l.url)}</span></div>`)
-        .join("")}</div>`
+    ? `<div class="links">${main.map(linkRow).join("") || `<span class="mut">no content links</span>`}</div>${
+        rest.length ? `<details class="more"><summary>${rest.length} more link${rest.length === 1 ? "" : "s"} (${e(restKinds)})</summary><div class="links">${rest.map(linkRow).join("")}</div></details>` : ""
+      }`
     : `<span class="mut">none</span>`;
   const atts = m.attachments.length
     ? m.attachments.map((a) => `${e(a.filename ?? "(unnamed)")} <span class="mut">${e(a.mime_type)}, ${a.size} B${a.inline ? ", inline" : ""}</span>`).join("<br>")

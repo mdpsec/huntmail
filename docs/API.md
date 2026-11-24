@@ -4,7 +4,7 @@ Base URL (`HUNTMAIL_URL`): `https://<worker-name>.<your-subdomain>.workers.dev/<
 
 **User-Agent:** Cloudflare's edge rejects Python's default `Python-urllib/x.y` User-Agent on `workers.dev` hosts with `error code: 1010` before the request reaches the Worker. Set any User-Agent header when using `urllib`. curl, wget, requests, httpx, aiohttp, Node and Go clients work as-is.
 
-`GET /health` needs no key and returns `{"ok": true, "version": "1.3.0"}` (the running HuntMail version).
+`GET /health` needs no key and returns `{"ok": true, "version": "1.4.0"}` (the running HuntMail version).
 
 All `/api/*` routes need the key, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Responses are JSON unless noted. Times are ISO 8601 UTC. `since` and `before` also accept unix seconds or milliseconds.
 
@@ -35,7 +35,7 @@ Anyone on the internet can send mail to any address on your domain, and can forg
   "has_html": true,
   "codes": ["482913"],
   "links": ["https://target.example/verify?t=..."],
-  "link_details": [{ "url": "https://target.example/verify?t=...", "text": "Verify your email" }],
+  "link_details": [{ "url": "https://target.example/verify?t=...", "text": "Verify your email", "kind": "action" }],
   "action": { "kind": "Verify", "url": "https://target.example/verify?t=...", "text": "Verify your email" },
   "attachments": [{ "filename": "logo.png", "mime_type": "image/png", "size": 1234, "content_id": "<logo>", "inline": true }],
   "auth": { "spf": "pass", "dkim": "pass", "dmarc": "pass", "verified_domains": ["target.example"], "spam_score": 0 },
@@ -48,7 +48,7 @@ Anyone on the internet can send mail to any address on your domain, and can forg
 - `to` is the envelope recipient, lowercased. Filtering on `to` is an exact match.
 - `codes`: likely one-time codes, best guess first. Digit codes of 4-8 next to words like "code", "verify" or "PIN" (or anywhere in the subject), bare six-digit numbers in short mail, joined `123 456` style codes, and letter+digit codes next to code words.
 - `links`: http(s) links from the HTML, then the plain text, in order, de-duplicated, entities decoded. Only links a reader can click: stylesheet and font `<link>` tags are skipped.
-- `link_details`: the same links, each with the `text` a reader sees (for image buttons, the image's alt text; `""` for links found in plain text). Use it to pick the right link, e.g. the one whose text says "Reset password" rather than "Unsubscribe". The text is written by the sender and can be anything; opening a link counts as a click and may use up a one-time token.
+- `link_details`: the same links, each with the `text` a reader sees (for image buttons, the image's alt text; `""` for links found in plain text). Use it to pick the right link, e.g. the one whose text says "Reset password" rather than "Unsubscribe". The text is written by the sender and can be anything; opening a link counts as a click and may use up a one-time token. Each also has a `kind`, so a reader can fold away the links every mail carries: `action` (the message's `action` link), `unsubscribe` (unsubscribe and email preferences), `view` (view in browser), `social`, `app` (app stores), `legal` (privacy, terms, cookies), `support` (help, contact, FAQ), `image` (logo and icon links), or `""` for everything else, the content. Worked out from the text first and the address second, when the mail is read, so it applies to stored mail too. A best guess, like `action`.
 - `action`: the link the mail is about, or `null`: `kind` is `Verify` (verify or confirm an address, activate an account), `Reset` (password reset), `Sign in` (magic link) or `Invite`, with its `url` and `text`. Picked from `link_details` by the link text first (unless the text is itself an address), then by words at the start of a path segment in the address (never the query); unsubscribe, preferences, social and help links never count. A best guess from sender-controlled links: check it before an agent opens it.
 - `newsletter`: `true` for a newsletter (see "Newsletters and blocks"). `false` until the message is parsed.
 - `sender_domain`: the From header's domain, lowercased (`""` without one). The value to send for a sender block.
@@ -136,7 +136,7 @@ npx playwright screenshot --full-page "$LINK" email.png
 
 ## Newsletters and blocks
 
-A message is a **newsletter** when all of these hold: it has newsletter headers (`List-Unsubscribe`, `List-Id`, or `Precedence: bulk`), it has been parsed, it has no code and no `action` link, and its subject does not look like account mail (verify, confirm, password, code, sign in, security, welcome, invite, account, new device and the like, in English and the common European and East Asian languages). Many sites send their sign-up and reset mail through the same mailing services as their newsletters, so the headers alone never decide. Newsletters are kept, not deleted: the inbox hides them by default (a list filtered to one address shows everything), `newsletters=hide` leaves them out of a list, the size cap evicts them first, and `NEWSLETTER_RETENTION_DAYS` can keep them for fewer days than other mail.
+A message is a **newsletter** when all of these hold: it has newsletter headers (`List-Unsubscribe`, `List-Id`, or `Precedence: bulk`), it has been parsed, it has no code and no `action` link, and its subject does not look like account mail (verify, confirm, password, your code, sign in, security alert, welcome, invite, your account, new device and the like, in English and the common European and East Asian languages). Many sites send their sign-up and reset mail through the same mailing services as their newsletters, so the headers alone never decide. Newsletters are kept, not deleted: the inbox hides them by default (a list filtered to one address shows everything), `newsletters=hide` leaves them out of a list, the size cap evicts them first, and `NEWSLETTER_RETENTION_DAYS` can keep them for fewer days than other mail.
 
 A **block** rejects mail at arrival: it is never stored or forwarded, and the sender gets a bounce, which makes mailing lists drop the address. Block from a message's page in the inbox, or through the API:
 

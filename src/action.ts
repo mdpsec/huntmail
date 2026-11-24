@@ -61,6 +61,51 @@ function hostPath(u: string): string {
   return (p.host + p.pathname).toLowerCase();
 }
 
+export type LinkKind = "action" | "unsubscribe" | "view" | "social" | "app" | "legal" | "support" | "image" | "";
+
+const SOCIAL_HOST =
+  /(^|\.)(facebook\.com|fb\.com|fb\.me|instagram\.com|linkedin\.com|lnkd\.in|twitter\.com|x\.com|youtube\.com|youtu\.be|tiktok\.com|pinterest\.[a-z.]+|threads\.net|snapchat\.com|reddit\.com|t\.me|telegram\.me|whatsapp\.com|wa\.me|bsky\.app|weibo\.com|line\.me|discord\.gg)$/;
+const SOCIAL_TEXT = /^(follow us|find us|join us)\b|^(facebook|fb|instagram|insta|ig|linkedin|in|twitter|tw|x|youtube|yt|tiktok|pinterest|threads|snapchat|reddit|telegram|whatsapp|bluesky|discord)( (logo|icon|page))?$/;
+const APP = { host: /^(apps|itunes)\.apple\.com$|^play\.google\.com$|^appgallery\.huawei\.com$/, text: /app ?store|google play|play store|download (the|our) app|get (it on|the app)/ };
+const UNSUB = {
+  text: /unsubscribe|opt[- ]?out|preferences|manage (your )?(subscription|email|notification)s?|(email|notification|subscription|communication) settings|stop (receiving|these)/,
+  url: /unsub|opt-?out|email-?pref|manage-?pref|\/preferences|notification-?settings|settings\/notification/,
+};
+const VIEW = {
+  text: /view (it |this )?(email |message |newsletter )?(in|on|as) (a |your )?(web ?)?(browser|page|web)|web ?version|view online|having trouble (viewing|reading)|can'?t see (this|the)/,
+  url: /webversion|web-version|view-?in-?browser|viewonline|emailview/,
+};
+const LEGAL = /privacy|terms|legal|trademark|cookie|copyright|disclaimer|imprint|impressum|accessibility|gdpr|ccpa/;
+const SUPPORT = { text: /\bhelp\b|support|contact( us)?\b|\bfaq|customer (service|care)|feedback/, url: /(^|[^a-z0-9])(help|support|contact|faq|feedback)([^a-z0-9]|$)/ };
+const IMAGE = /\b(logo|icon|banner|image|img|spacer|pixel)\b/;
+
+/**
+ * What a link is for, so a reader can fold away the links every mail carries. `action` is the
+ * message's action link; "" is everything else (the content).
+ */
+export function linkKind(l: LinkDetail, action: ActionLink | null): LinkKind {
+  if (action && l.url === action.url) return "action";
+  const shown = l.text.trim().toLowerCase();
+  const text = shown.includes("://") || shown.startsWith("www.") ? "" : shown;
+  let host = "";
+  let path = "";
+  try {
+    const u = new URL(l.url);
+    host = u.hostname.toLowerCase();
+    path = (host + u.pathname).toLowerCase();
+  } catch {
+    // not a URL: text decides
+  }
+  if (UNSUB.text.test(text) || UNSUB.url.test(path)) return "unsubscribe";
+  if (VIEW.text.test(text) || VIEW.url.test(path)) return "view";
+  if (SOCIAL_HOST.test(host) || SOCIAL_TEXT.test(text)) return "social";
+  if (APP.host.test(host) || APP.text.test(text)) return "app";
+  if (LEGAL.test(text) || (!text && LEGAL.test(path))) return "legal";
+  if (SUPPORT.text.test(text) || (!text && SUPPORT.url.test(path))) return "support";
+  if (IMAGE.test(text)) return "image";
+  return "";
+}
+
 /** The message's action link, or null. */
 export function actionLink(links: LinkDetail[]): ActionLink | null {
   for (const k of KINDS) {

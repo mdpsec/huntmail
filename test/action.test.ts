@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionLink } from "../src/action";
+import { actionLink, linkKind } from "../src/action";
 
 const L = (url: string, text = "") => ({ url, text });
 
@@ -55,5 +55,38 @@ describe("action link", () => {
     expect(actionLink([L("not a url", "Verify")])).toBeNull();
     expect(actionLink([L("https://a.example/news", "Read more")])).toBeNull();
     expect(actionLink([])).toBeNull();
+  });
+});
+
+describe("link kinds", () => {
+  const k = (url: string, text = "") => linkKind(L(url, text), null);
+  it("names the links every mail carries", () => {
+    expect(k("https://n.example/u?x=1", "Unsubscribe")).toBe("unsubscribe");
+    expect(k("https://n.example/email-preferences")).toBe("unsubscribe");
+    expect(k("https://n.example/m/1", "Manage your email preferences")).toBe("unsubscribe");
+    expect(k("https://n.example/webversion/abc")).toBe("view");
+    expect(k("https://n.example/x", "View this email in your browser")).toBe("view");
+    expect(k("https://www.facebook.com/acme", "Facebook")).toBe("social");
+    expect(k("https://t.example/c/1", "Instagram")).toBe("social");
+    expect(k("https://x.com/acme")).toBe("social");
+    for (const t of ["fb", "Insta", "tw", "yt", "in"]) expect(k("https://t.example/c/3", t)).toBe("social");
+    expect(k("https://a.example/app/settings/notifications")).toBe("unsubscribe");
+    expect(k("https://apps.apple.com/app/id1")).toBe("app");
+    expect(k("https://t.example/c/2", "Get it on Google Play")).toBe("app");
+    expect(k("https://n.example/privacy", "Privacy Policy")).toBe("legal");
+    expect(k("https://n.example/legal/terms")).toBe("legal");
+    expect(k("https://n.example/help", "Help Center")).toBe("support");
+    expect(k("https://n.example/contact-us")).toBe("support");
+    expect(k("https://n.example/", "Acme logo")).toBe("image");
+  });
+
+  it("leaves content alone, and marks the action link", () => {
+    expect(k("https://n.example/jobs/123", "Senior Security Engineer")).toBe("");
+    expect(k("https://n.example/blog/post", "Read more")).toBe("");
+    // Text decides over the address: a privacy article is content when its text says so.
+    expect(k("https://n.example/blog/privacy-tips", "Five tips for your week")).toBe("");
+    const links = [L("https://a.example/verify?t=1", "Verify your email"), L("https://a.example/privacy", "Privacy")];
+    const action = actionLink(links);
+    expect(links.map((l) => linkKind(l, action))).toEqual(["action", "legal"]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractCodes, extractLinkDetails, extractLinks, htmlToText } from "../src/extract";
+import { decodeEntities, decodeLeftoverEntities, extractCodes, extractLinkDetails, extractLinks, htmlToText } from "../src/extract";
 
 describe("extractCodes", () => {
   it("prefers a code next to a code word", () => {
@@ -97,5 +97,22 @@ describe("extractLinkDetails", () => {
     expect(extractLinkDetails("", `<a href="https://a.example/1">${long}</a>`)[0]!.text).toHaveLength(200);
     expect(extractLinkDetails("", `<a href="https://a.example/1>never closed <a href="https://a.example/2">two</a>`)).toEqual([]);
     expect(extractLinkDetails("", `<p>x</p><a href="https://a.example/3">three`)).toEqual([{ url: "https://a.example/3", text: "three" }]);
+  });
+});
+
+describe("entities", () => {
+  it("decodes spacing, punctuation and accents, and numeric references", () => {
+    expect(decodeEntities("Jobs&emsp;near&ensp;you&nbsp;&amp; more")).toBe("Jobs near you & more");
+    expect(decodeEntities("caf&eacute; &ndash; &hellip; &#8217; &#x2019; zero&zwnj;width")).toBe("café – … ’ ’ zerowidth");
+    expect(decodeEntities("&unknown; &#0; stays")).toBe("&unknown; &#0; stays");
+  });
+  it("decodes leftovers in text parsed earlier without decoding anything twice", () => {
+    expect(decodeLeftoverEntities("Jobs&emsp;near you")).toBe("Jobs near you");
+    expect(decodeLeftoverEntities("&lt;b&gt; &amp; &quot;")).toBe("&lt;b&gt; &amp; &quot;");
+    expect(decodeLeftoverEntities("plain")).toBe("plain");
+  });
+  it("decodes in link text and body text from HTML", () => {
+    expect(htmlToText("<p>New&emsp;jobs</p>")).toBe("New jobs");
+    expect(extractLinkDetails("", '<a href="https://j.example/1">View&emsp;job</a>')[0]?.text).toBe("View job");
   });
 });

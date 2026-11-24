@@ -1,6 +1,6 @@
 {
   "name": "huntmail",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Catch-all inbox for bug bounty hunters on Cloudflare Email Routing, Workers and D1. Free plan friendly.",
   "license": "FSL-1.1-ALv2",

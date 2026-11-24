@@ -1,15 +1,40 @@
 // Cheap extraction of the things agents usually want from verification mail.
 
-const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const BASIC: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+/** Named entities common in mail beyond the basic six: spaces, punctuation, symbols, accents. */
+const MORE: Record<string, string> = {
+  ensp: " ", emsp: " ", thinsp: " ", hairsp: " ", zwnj: "", zwj: "", shy: "", lrm: "", rlm: "",
+  ndash: "–", mdash: "—", hellip: "…", lsquo: "‘", rsquo: "’", sbquo: "‚", ldquo: "“", rdquo: "”", bdquo: "„",
+  laquo: "«", raquo: "»", lsaquo: "‹", rsaquo: "›", bull: "•", middot: "·", prime: "′", dagger: "†",
+  copy: "©", reg: "®", trade: "™", deg: "°", plusmn: "±", times: "×", divide: "÷", frac12: "½", frac14: "¼", frac34: "¾",
+  euro: "€", pound: "£", yen: "¥", cent: "¢", sect: "§", para: "¶", iexcl: "¡", iquest: "¿", larr: "←", rarr: "→", uarr: "↑", darr: "↓", check: "✓",
+  aacute: "á", agrave: "à", acirc: "â", atilde: "ã", auml: "ä", aring: "å", aelig: "æ", ccedil: "ç", eacute: "é", egrave: "è", ecirc: "ê", euml: "ë",
+  iacute: "í", igrave: "ì", icirc: "î", iuml: "ï", ntilde: "ñ", oacute: "ó", ograve: "ò", ocirc: "ô", otilde: "õ", ouml: "ö", oslash: "ø",
+  uacute: "ú", ugrave: "ù", ucirc: "û", uuml: "ü", yacute: "ý", yuml: "ÿ", szlig: "ß",
+  Aacute: "Á", Agrave: "À", Auml: "Ä", Aring: "Å", Ccedil: "Ç", Eacute: "É", Egrave: "È", Ntilde: "Ñ", Oacute: "Ó", Ouml: "Ö", Oslash: "Ø", Uacute: "Ú", Uuml: "Ü",
+};
+
+function named(m: string, e: string, table: Record<string, string>): string {
+  return table[e] ?? table[e.toLowerCase()] ?? m;
+}
 
 export function decodeEntities(s: string): string {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+[0-9]*);/gi, (m, e: string) => {
     if (e[0] === "#") {
       const cp = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
       return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
     }
-    return ENTITY[e.toLowerCase()] ?? m;
+    return BASIC[e.toLowerCase()] ?? named(m, e, MORE);
   });
+}
+
+/**
+ * For text parsed before the wider table: decodes only the MORE entities, never &amp; and the other
+ * basic ones, so text decoded once is not decoded twice.
+ */
+export function decodeLeftoverEntities(s: string): string {
+  return s.includes("&") ? s.replace(/&([a-z]+[0-9]*);/gi, (m, e: string) => named(m, e, MORE)) : s;
 }
 
 /** Most HTML characters converted to text. Longer input is cut, which keeps the cost bounded. */

@@ -1,6 +1,6 @@
-import { actionLink, type ActionLink } from "./action";
+import { actionLink, type ActionLink, type LinkKind, linkKind } from "./action";
 import { fromDomain } from "./bulk";
-import type { LinkDetail } from "./extract";
+import { decodeLeftoverEntities, type LinkDetail } from "./extract";
 import { concatBytes, gunzip } from "./util";
 
 /** D1 caps a row or blob at 2 MB. Keep chunks well under. */
@@ -90,8 +90,11 @@ export interface MessageOut {
   has_html: boolean;
   codes: string[];
   links: string[];
-  /** Each link with its visible text ("" for links found in plain text). */
-  link_details: LinkDetail[];
+  /**
+   * Each link with its visible text ("" for links found in plain text) and its kind: "action",
+   * "unsubscribe", "view", "social", "app", "legal", "support", "image", or "" for content.
+   */
+  link_details: (LinkDetail & { kind: LinkKind })[];
   /** The link the mail is about (verify, reset, sign in, invite), from link_details; null without one. */
   action: ActionLink | null;
   attachments: AttachmentMeta[];
@@ -111,7 +114,9 @@ function linkDetails(json: string): LinkDetail[] {
 }
 
 export function toOut(r: Row): MessageOut {
-  const details = linkDetails(r.links ?? "[]");
+  // Text parsed before the wider entity table may still hold &emsp; and the like.
+  const details = linkDetails(r.links ?? "[]").map((l) => ({ url: l.url, text: decodeLeftoverEntities(l.text) }));
+  const action = actionLink(details);
   const out: MessageOut = {
     id: r.id,
     received_at: new Date(r.received_at).toISOString(),
@@ -125,8 +130,8 @@ export function toOut(r: Row): MessageOut {
     has_html: r.has_html === 1,
     codes: JSON.parse(r.codes) as string[],
     links: details.map((l) => l.url),
-    link_details: details,
-    action: actionLink(details),
+    link_details: details.map((l) => ({ ...l, kind: linkKind(l, action) })),
+    action,
     attachments: JSON.parse(r.attachments ?? "[]") as AttachmentMeta[],
     auth: {
       spf: r.auth_spf || "none",
@@ -141,7 +146,7 @@ export function toOut(r: Row): MessageOut {
     newsletter: r.bulk === 1 && r.has_action === 0 && r.codes === "[]" && (r.parse_status === "ok" || r.parse_status === "partial"),
     sender_domain: fromDomain(r.header_from),
   };
-  if (r.text !== undefined) out.text = r.text;
+  if (r.text !== undefined) out.text = decodeLeftoverEntities(r.text);
   return out;
 }
 

@@ -5,6 +5,23 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.4.0 (2026-11-24)
+
+- `link_details` entries carry a `kind`: `action`, `unsubscribe`, `view`,
+  `social`, `app`, `legal`, `support`, `image`, or `""` for content. Worked out
+  when mail is read, so stored mail has it too. The inbox's message page lists
+  content and the action link first and folds the rest.
+- More HTML entities decoded in link text and body text (`&emsp;`, `&ndash;`,
+  `&hellip;`, curly quotes, accented letters and others), including for mail
+  parsed before this version.
+- Newsletters: the account-subject guard uses account phrases ("security
+  alert", "your account", "your code") rather than single words, so job alerts
+  such as "Security Consultant" or "Account Manager" roles count as newsletters.
+  Applies to mail arriving after the upgrade.
+
+Upgrading: `git pull`, then `pnpm redeploy` (or re-run `scripts/setup.sh`). No
+new migration.
+
 ## v1.3.0 (2026-11-24)
 
 - Newsletters: `newsletter` on every message (newsletter headers, parsed, no

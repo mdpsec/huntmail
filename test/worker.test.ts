@@ -726,6 +726,10 @@ describe("ui", () => {
     expect(by("code@hunt.example").action).toBeNull();
     const one = (await apiJson(`/api/emails/${by("act@hunt.example").id}`)).body;
     expect(one.action.kind).toBe("Verify");
+    expect(one.link_details).toEqual([
+      { url: "https://site.example/help", text: "Help", kind: "support" },
+      { url: "https://site.example/v?t=abc&u=1", text: "Confirm your account", kind: "action" },
+    ]);
     const cookie = await login();
     const page = await (await SELF.fetch(`${BASE}/inbox`, { headers: { cookie } })).text();
     expect(page).toContain("<th title=\"The likeliest one-time code");
@@ -734,6 +738,7 @@ describe("ui", () => {
     expect(page).toContain('data-copy="424242"');
     const detail = await (await SELF.fetch(`${BASE}/inbox/${by("act@hunt.example").id}`, { headers: { cookie } })).text();
     expect(detail).toContain("<dt>Action link</dt>");
+    expect(detail).toContain("<summary>1 more link (support)</summary>");
   });
 
   it("rejects forged session cookies", async () => {

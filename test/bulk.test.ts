@@ -14,6 +14,15 @@ describe("newsletter headers", () => {
     }
   });
 
+  it("does not take job alerts and offers for account mail", () => {
+    for (const s of ["Westpac Group is hiring: Information Security Consultant", "3 new Security Analyst jobs", "Account Manager roles near you", "Code Reviewer wanted", "Save 20% on home security"]) {
+      expect(isBulk(hdrs({ "list-unsubscribe": "<https://n.example/u>" }), s)).toBe(true);
+    }
+    for (const s of ["Security alert: new sign-in", "Your account has been locked", "Your Acme code", "Account security update"]) {
+      expect(isBulk(hdrs({ "list-unsubscribe": "<https://n.example/u>" }), s)).toBe(false);
+    }
+  });
+
   it("finds the From domain and its parents", () => {
     expect(fromDomain("WebMD <news@Messages.WebMD.com>")).toBe("messages.webmd.com");
     expect(fromDomain("news@rei.example")).toBe("rei.example");
