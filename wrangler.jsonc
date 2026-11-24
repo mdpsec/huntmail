@@ -45,6 +45,9 @@
     // newest first, so lists show its codes. Off on the free plan (a big parse can pass 10 ms);
     // on Paid use "1".
     "CRON_PARSE_DEFERRED": "0",
+    // Messages each per-minute run parses. 4 fits the free plan's 10 ms; on Paid with
+    // CRON_PARSE_DEFERRED, 25 clears a backlog of big mail quickly (a big parse takes tens of ms).
+    "CRON_PARSE_MAX": "4",
     // Days to keep newsletters (mail with unsubscribe headers and no code or action link), when
     // fewer than RETENTION_DAYS. "0": the same as RETENTION_DAYS.
     "NEWSLETTER_RETENTION_DAYS": "0"

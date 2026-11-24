@@ -4,7 +4,7 @@ Base URL (`HUNTMAIL_URL`): `https://<worker-name>.<your-subdomain>.workers.dev/<
 
 **User-Agent:** Cloudflare's edge rejects Python's default `Python-urllib/x.y` User-Agent on `workers.dev` hosts with `error code: 1010` before the request reaches the Worker. Set any User-Agent header when using `urllib`. curl, wget, requests, httpx, aiohttp, Node and Go clients work as-is.
 
-`GET /health` needs no key and returns `{"ok": true, "version": "1.4.0"}` (the running HuntMail version).
+`GET /health` needs no key and returns `{"ok": true, "version": "1.5.0"}` (the running HuntMail version).
 
 All `/api/*` routes need the key, as `X-Api-Key: <key>` or `Authorization: Bearer <key>`. Responses are JSON unless noted. Times are ISO 8601 UTC. `since` and `before` also accept unix seconds or milliseconds.
 
@@ -74,7 +74,7 @@ Long-poll. Returns the newest matching message as soon as one exists, plus `matc
 | `to_prefix` | recipient starts with this, e.g. `acme-` for every `acme-...@` address. 3 or more of `a-z 0-9 . _ + - @`, case-insensitive; not together with `to` |
 | `to_domain` | recipient domain, exact and case-insensitive: `yourdomain.com` matches `x@yourdomain.com`, not `x@sub.yourdomain.com` |
 | `subject` | subject contains (case-insensitive) |
-| `q` | subject, sender or header recipient contains (all sender-controlled) |
+| `q` | subject, sender, header recipient or the address it arrived at contains (all but the last sender-controlled) |
 | `from_domain` | only mail verified (DKIM or DMARC) for this domain or a subdomain of it |
 | `since` | only mail received after this. Default: the moment of the request |
 | `timeout` | seconds, default 30, max 50. Cloudflare drops a request that sends nothing for about 60 s, so loop for longer waits. |

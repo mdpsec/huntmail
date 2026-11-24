@@ -5,6 +5,18 @@ the API under `<base>/api`, the configuration variables and the database
 (migrated in place by `scripts/setup.sh`) stay compatible within a major
 version.
 
+## v1.5.0 (2026-11-24)
+
+- `q` also matches the address mail arrived at (`to`), so forwarded mail,
+  whose To header still names the original mailbox, is found by the address
+  it was delivered to.
+- `CRON_PARSE_MAX` (default `4`): messages each per-minute run parses. With
+  `CRON_PARSE_DEFERRED=1` the run's byte budget is `PARSE_BYTES` per message,
+  so on Workers Paid `25` clears a backlog of big mail quickly.
+
+Upgrading: `git pull`, then `pnpm redeploy` (or re-run `scripts/setup.sh`). No
+new migration.
+
 ## v1.4.0 (2026-11-24)
 
 - `link_details` entries carry a `kind`: `action`, `unsubscribe`, `view`,

@@ -561,14 +561,18 @@ async function ui(req: Request, env: Env, url: URL, parts: string[], c: Ctx): Pr
 }
 
 /**
- * Each cron run parses up to CRON_PARSE_MAX pending messages, oldest first, stopping once about
- * CRON_PARSE_BYTES of raw mail has been handled (a single bigger message still gets its turn).
- * Only mail up to BACKGROUND_PARSE_MAX_BYTES (64 KB) is pending at arrival, so four fit a run:
- * up to 240 messages an hour. Bigger mail is deferred and parsed when read. A run that runs out
- * of CPU loses nothing: the message stays stored and is retried on a smaller slice.
+ * Each cron run parses up to CRON_PARSE_MAX messages (default 4): pending ones oldest first, then,
+ * with CRON_PARSE_DEFERRED, big ones newest first. It stops once about 64 KB per message of raw
+ * mail has been handled, or PARSE_BYTES per message with CRON_PARSE_DEFERRED (a single bigger
+ * message still gets its turn). Only mail up to 64 KB is pending at arrival, so the default fits
+ * four a run: up to 240 messages an hour. A run that runs out of CPU loses nothing: the message
+ * stays stored and is retried on a smaller slice.
  */
-const CRON_PARSE_MAX = 4;
-const CRON_PARSE_BYTES = 256 * 1024;
+function cronParse(env: Env): { max: number; bytes: number; deferred: boolean } {
+  const max = intVar(env.CRON_PARSE_MAX, 4, 1, 100);
+  const deferred = env.CRON_PARSE_DEFERRED === "1";
+  return { max, deferred, bytes: max * (deferred ? intVar(env.PARSE_BYTES, DEFAULT_PARSE_BYTES, 16 * 1024) : 64 * 1024) };
+}
 
 export default {
   async fetch(req, env): Promise<Response> {
@@ -603,7 +607,8 @@ export default {
 
   /** Every minute: parse the oldest pending messages (see CRON_PARSE_MAX). Once an hour: retention. */
   async scheduled(controller, env): Promise<void> {
-    const parsed = await parsePending(env, CRON_PARSE_BYTES, CRON_PARSE_MAX, env.CRON_PARSE_DEFERRED === "1");
+    const run = cronParse(env);
+    const parsed = await parsePending(env, run.bytes, run.max, run.deferred);
     if (parsed) console.log(JSON.stringify({ event: "parsed", count: parsed }));
     if (new Date(controller.scheduledTime).getUTCMinutes() === 17) {
       const result = await enforceRetention(

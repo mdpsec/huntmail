@@ -306,9 +306,9 @@ function whereClause(q: Omit<ListQuery, "limit" | "withText" | "order">): { sql:
   if (q.q) {
     const like = "%" + likeEscape(q.q) + "%";
     where.push(
-      `(subject LIKE ? ESCAPE '\\' OR header_from LIKE ? ESCAPE '\\' OR header_to LIKE ? ESCAPE '\\' OR envelope_from LIKE ? ESCAPE '\\')`,
+      `(subject LIKE ? ESCAPE '\\' OR header_from LIKE ? ESCAPE '\\' OR header_to LIKE ? ESCAPE '\\' OR envelope_from LIKE ? ESCAPE '\\' OR envelope_to LIKE ? ESCAPE '\\')`,
     );
-    args.push(like, like, like, like);
+    args.push(like, like, like, like, like);
   }
   if (q.fromDomain) {
     const d = likeEscape(q.fromDomain.toLowerCase().replace(/^\.+|\.+$/g, ""));

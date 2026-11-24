@@ -200,11 +200,11 @@ describe("ingest", () => {
     // Off by default: the cron leaves big mail alone.
     await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 5) }), env);
     expect([await status("small@hunt.example"), await status("new@hunt.example"), await status("old@hunt.example")]).toEqual(["ok", "deferred", "deferred"]);
-    const on = { ...env, CRON_PARSE_DEFERRED: "1" };
-    // The 256 KB budget: each 70 KB message counts in full, and the first one always runs.
-    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 6) }), on);
-    expect(await status("new@hunt.example")).toBe("ok");
-    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 7) }), on);
+    // CRON_PARSE_MAX caps a run: one message, the newest.
+    const one = { ...env, CRON_PARSE_DEFERRED: "1", CRON_PARSE_MAX: "1" };
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 6) }), one);
+    expect([await status("new@hunt.example"), await status("old@hunt.example")]).toEqual(["ok", "deferred"]);
+    await worker.scheduled(createScheduledController({ scheduledTime: Date.UTC(2026, 0, 1, 0, 7) }), { ...env, CRON_PARSE_DEFERRED: "1" });
     expect(await status("old@hunt.example")).toBe("ok");
     const st = (await apiJson("/api/stats")).body;
     expect([st.parse_deferred, st.parse_pending]).toEqual([0, 0]);
@@ -346,6 +346,10 @@ describe("api", () => {
     await deliver(plain("2", { subject: "Welcome aboard", from: "Team <team@other.example>" }), { to: "f@hunt.example" });
     expect((await apiJson("/api/emails?to=f@hunt.example&subject=RESET")).body.emails).toHaveLength(1);
     expect((await apiJson("/api/emails?q=other.example")).body.emails).toHaveLength(1);
+    // Forwarded mail keeps the original To header: q also matches the address it arrived at.
+    await deliver(plain("3", { to: "me@mailbox.example" }), { to: "fwd-1@hunt.example" });
+    expect((await apiJson("/api/emails?q=fwd-1@hunt.example")).body.emails.map((m: any) => m.to)).toEqual(["fwd-1@hunt.example"]);
+    expect((await apiJson("/api/emails?q=FWD-1")).body.emails).toHaveLength(1);
     expect((await apiJson(`/api/emails?to=f@hunt.example&since=${mid}`)).body.emails[0].subject).toBe("Welcome aboard");
     const all = (await apiJson("/api/emails?to=f@hunt.example")).body.emails;
     expect(all[0].subject).toBe("Welcome aboard");

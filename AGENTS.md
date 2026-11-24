@@ -60,7 +60,7 @@ them.
 - **An empty `body`/`text` in a search result:** big mail (over 64 KB) is
   parsed when something reads it. A read by id, `/api/wait`, or a list with
   `to=` parses it. On Workers Paid, `CRON_PARSE_DEFERRED=1` parses it in the
-  background too.
+  background too, `CRON_PARSE_MAX` messages a minute.
 - **`401` everywhere after re-running setup:** the key was rotated
   (`HUNTMAIL_API_KEY` was set). Use the new one.
 

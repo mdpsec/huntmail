@@ -148,7 +148,7 @@ The domain is the only required cost. HuntMail runs on the Workers Free plan, wh
 | Workers Logs | 200,000 events a day, kept 3 days | 20 million a month included, kept 7 days | Arrival, parse and auth failure logs. |
 | Email Routing | Free | Free | Messages up to 25 MiB; HuntMail stores the first 4 MB (`MAX_MESSAGE_KB`). |
 
-Figures from Cloudflare's pricing and limits pages, November 2026. On Paid, raise `MAX_STORE_MB` (up to about 9000), `PARSE_BYTES`, `GZIP_MAX_BYTES` and `TO_READ_PARSE_MAX` (25), and set `CRON_PARSE_DEFERRED` to `1`, in `wrangler.local.jsonc` and redeploy ([settings](docs/SETUP.md#settings)).
+Figures from Cloudflare's pricing and limits pages, November 2026. On Paid, raise `MAX_STORE_MB` (up to about 9000), `PARSE_BYTES`, `GZIP_MAX_BYTES` and `TO_READ_PARSE_MAX` (25) and `CRON_PARSE_MAX` (25), and set `CRON_PARSE_DEFERRED` to `1`, in `wrangler.local.jsonc` and redeploy ([settings](docs/SETUP.md#settings)).
 
 ## Cloudflare API token
 

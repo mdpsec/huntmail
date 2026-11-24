@@ -78,6 +78,7 @@ If mail from one sender never shows up and nothing is logged: Email Routing reje
 | `TO_READ_PARSE_MAX` | `1` | Unparsed messages a per-address read (`to=`) parses before answering. `1` keeps a read inside the free plan's 10 ms CPU. On Paid use `25`, so a mailbox listing never shows an empty body. |
 | `NEWSLETTER_RETENTION_DAYS` | `0` | Days to keep newsletters when fewer than `RETENTION_DAYS` (see the API's "Newsletters and blocks"). `0`: the same as `RETENTION_DAYS`. |
 | `CRON_PARSE_DEFERRED` | `0` | `1`: the per-minute run also parses big mail (over 64 KB), newest first, so lists show its codes without a read. Leave `0` on the free plan (a big parse can pass 10 ms of CPU); on Paid use `1`. |
+| `CRON_PARSE_MAX` | `4` | Messages each per-minute run parses (1 to 100). `4` fits the free plan. On Paid with `CRON_PARSE_DEFERRED=1`, `25` clears a backlog of big mail in about an hour per 1,500 messages; a big parse takes tens of milliseconds. |
 
 Rotate the key: `HUNTMAIL_API_KEY=$(openssl rand -hex 32) ./scripts/setup.sh --domain yourdomain.com`. Old view links and sessions stop working. Keys under 32 characters are refused.
 
@@ -114,7 +115,7 @@ Count by IP (the free plan adds the data center), block for 10 s. Pick the thres
 | 100,000 Worker requests per day | Each polled read is one request. `/api/wait` turns a polling loop into one request. The per-minute cron adds 1,440 a day. |
 | 100,000 D1 rows written per day | About 15 rows per message (store, parse, indexes, read markers): roughly 6,500 messages a day. |
 
-Workers Paid ($5 a month per account) raises CPU to 30 s and D1 to 10 GB per database. No code change is needed. On Paid, raise `MAX_STORE_MB` (up to about 9000), `PARSE_BYTES`, `GZIP_MAX_BYTES` and `TO_READ_PARSE_MAX` (25), and set `CRON_PARSE_DEFERRED` to `1`, in `wrangler.local.jsonc` and redeploy ([settings](#settings)). Full free vs paid table: [README](../README.md#cost-free-plan-vs-workers-paid).
+Workers Paid ($5 a month per account) raises CPU to 30 s and D1 to 10 GB per database. No code change is needed. On Paid, raise `MAX_STORE_MB` (up to about 9000), `PARSE_BYTES`, `GZIP_MAX_BYTES` and `TO_READ_PARSE_MAX` (25) and `CRON_PARSE_MAX` (25), and set `CRON_PARSE_DEFERRED` to `1`, in `wrangler.local.jsonc` and redeploy ([settings](#settings)). Full free vs paid table: [README](../README.md#cost-free-plan-vs-workers-paid).
 
 ## How it works
 
@@ -124,7 +125,7 @@ agents, browser  -> https://huntmail.<you>.workers.dev/<base path>/...  -> Worke
 every minute     -> Worker scheduled() -> parse backlog, hourly retention
 ```
 
-The free plan allows 10 ms of CPU per invocation, and a mail handler that runs out of CPU loses the message. So arrival does almost nothing: it reads headers the runtime already parsed, gzips small mail, and stores the raw message. Parsing text, codes and links happens on the first read or in the per-minute cron (up to 4 messages a run), in its own invocation, with bounded retries. Mail over 64 KB is not parsed in the background unless `CRON_PARSE_DEFERRED` is `1` (for Paid): it is parsed when something reads it (by id, a per-address list, `/api/wait`, or the inbox), so on the free plan newsletter bursts cost nothing until opened. On the live edge, arrival measured about 9 ms of CPU (median) on real hunting mail, most of it fixed per-invocation cost rather than work that grows with message size.
+The free plan allows 10 ms of CPU per invocation, and a mail handler that runs out of CPU loses the message. So arrival does almost nothing: it reads headers the runtime already parsed, gzips small mail, and stores the raw message. Parsing text, codes and links happens on the first read or in the per-minute cron (up to 4 messages a run, `CRON_PARSE_MAX`), in its own invocation, with bounded retries. Mail over 64 KB is not parsed in the background unless `CRON_PARSE_DEFERRED` is `1` (for Paid): it is parsed when something reads it (by id, a per-address list, `/api/wait`, or the inbox), so on the free plan newsletter bursts cost nothing until opened. On the live edge, arrival measured about 9 ms of CPU (median) on real hunting mail, most of it fixed per-invocation cost rather than work that grows with message size.
 
 ## Without the script
 
